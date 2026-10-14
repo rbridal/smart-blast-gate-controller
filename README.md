@@ -41,7 +41,7 @@ detach. Closing the last open gate waits for the vac to coast down. Details:
 | Qty | Part | Notes |
 |---|---|---|
 | 1 | ESP32 DevKit, 38-pin (`esp32dev`) | Controller |
-| 2 | MG996R servo | **Metal 25T horns + threadlocker** (stock horns stripped) |
+| 2 | MG996R servo | **Metal 25T horns + threadlocker** (stock horns stripped). The printed parts are modeled around the [MECCANIXITY metal 25T single-arm servo horn](https://www.amazon.com/dp/B0G2CFPKC6) (aluminum, split clamp, 28 mm long, 7.5 mm thick, 3 mm hole). |
 | 2 | 2½″ printed ball valve (case/rotator/bearings) | PLA (PETG was too fragile); TPU flange seals |
 | 4 | RC-34A-style reed switch | One per end stop, set in the printed stops |
 | 2+ | Small neodymium magnets | On the 60 mm double horn |

@@ -25,3 +25,7 @@ Servo mounts are PLA.
 - 35–40 % gyroid infill
 
 Hard stops are printed flat with the reed inside, leaving about 1 mm of plastic between the reed and the magnet path.
+
+## Servo arm
+
+The rotator and servo mounts are modeled to fit the [MECCANIXITY metal 25T single-arm servo horn](https://www.amazon.com/dp/B0G2CFPKC6) (aluminum, split clamp, 28 mm long, 7.5 mm thick, 3 mm hole) exactly. The design was modified from the original to take this metal arm in place of the stock plastic horn, which stripped.
