@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="30mm" height="12mm" viewBox="0 0 30 12">
+  <rect x="0.3" y="0.3" width="29.4" height="11.4" rx="1" ry="1"
+        fill="none" stroke="#000000" stroke-width="0.1"/>
+  <!-- screw holes -->
+  <circle cx="4" cy="6" r="1.25" fill="none" stroke="#000000" stroke-width="0.1"/>
+  <circle cx="26" cy="6" r="1.25" fill="none" stroke="#000000" stroke-width="0.1"/>
+  <text x="15" y="7" text-anchor="middle" font-family="Arial" font-size="3" fill="#0000FF">REED</text>
+</svg>

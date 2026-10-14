@@ -1,0 +1,294 @@
+# Smart Blast Gate Prototype Display
+# Hardware: same as production Smart Blast Gate Display (circle-try-3.yaml)
+# Waveshare ESP32-S3 round AMOLED (CO5300 + CST9220), dual wifi shop+house.
+# UI: single full-screen OPEN/CLOSED toggle for the prototype Blast Gate.
+# Controls switch.smart_blast_gate_prototype_blast_gate directly (no vac/dust automations).
+# In Home Assistant: device settings → enable
+# "Allow the device to perform Home Assistant actions".
+
+substitutions:
+  name: "sbg-prototype-display"
+  friendly_name: "Smart Blast Gate Prototype Display"
+  gate_switch_entity: "switch.smart_blast_gate_prototype_blast_gate"
+
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+  platformio_options:
+    board_build.flash_mode: dio
+    board_build.f_flash: 80000000L
+    board_build.f_cpu: 240000000L
+
+esp32:
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_encryption_key  # REDACTED
+
+ota:
+  - platform: esphome
+    password: !secret smart_blast_gate_prototype_display__ota_password
+
+safe_mode:
+
+wifi:
+  networks:
+    - id: wifi_house
+      ssid: !secret wifi_ssid_house
+      password: !secret wifi_password_house
+    - id: wifi_shop
+      ssid: !secret wifi_ssid_shop
+      password: !secret wifi_password_shop
+
+i2c:
+  id: i2c_bus
+  sda: GPIO15
+  scl: GPIO14
+  scan: true
+
+spi:
+  - id: display_spi
+    type: quad
+    clk_pin: GPIO38
+    data_pins:
+      - GPIO4
+      - GPIO5
+      - GPIO6
+      - GPIO7
+
+display:
+  - platform: mipi_spi
+    id: disp1
+    model: CO5300
+    bus_mode: quad
+    reset_pin: GPIO39
+    cs_pin: GPIO12
+    dimensions:
+      height: "466"
+      width: "466"
+      offset_height: 0
+      offset_width: 7
+
+light:
+  - platform: monochromatic
+    id: display_backlight
+    name: "Backlight"
+    output: backlight_brightness
+    default_transition_length:
+      milliseconds: 0
+    initial_state:
+      brightness: 81%
+    restore_mode:
+      ALWAYS_ON
+
+output:
+  - platform: template
+    id: backlight_brightness
+    type: float
+    write_action:
+      then:
+        - lambda: |-
+            id(disp1).set_brightness(state * 255);
+
+touchscreen:
+  - platform: cst9220
+    display: disp1
+    id: ts_disp1
+    interrupt_pin: GPIO11
+    reset_pin: GPIO40
+    transform:
+      mirror_x: true
+      mirror_y: true
+
+font:
+  - file:
+      type: gfonts
+      family: "Roboto"
+      weight: black
+    id: font_hero
+    size: 72
+    bpp: 4
+  - file:
+      type: gfonts
+      family: "Roboto"
+      weight: bold
+    id: font_sub
+    size: 28
+    bpp: 4
+
+color:
+  - id: fgcolor_on
+    hex: "FFFFFF"
+  - id: fgcolor_off
+    hex: "A0A0A0"
+  - id: bgcolor_closed
+    hex: "1A1A1A"
+  # Clear open state — Festool/Bambu green family
+  - id: bgcolor_open
+    hex: "00AE42"
+
+script:
+  - id: update_gate_ui
+    then:
+      - if:
+          condition:
+            binary_sensor.is_on: gate_valve
+          then:
+            - lvgl.widget.update:
+                id: gate_panel
+                bg_color: bgcolor_open
+            - lvgl.label.update:
+                id: gate_label
+                text: "OPEN"
+                text_color: fgcolor_on
+            - lvgl.label.update:
+                id: gate_hint
+                text: "tap to close"
+                text_color: fgcolor_on
+          else:
+            - lvgl.widget.update:
+                id: gate_panel
+                bg_color: bgcolor_closed
+            - lvgl.label.update:
+                id: gate_label
+                text: "CLOSED"
+                text_color: fgcolor_off
+            - lvgl.label.update:
+                id: gate_hint
+                text: "tap to open"
+                text_color: fgcolor_off
+
+  # mode: single + trailing delay = ignore double-taps while servo moves
+  - id: gate_tap
+    mode: single
+    then:
+      - if:
+          condition:
+            binary_sensor.is_on: gate_valve
+          then:
+            # Closing — optimistic UI, then switch.turn_off
+            - lvgl.widget.update:
+                id: gate_panel
+                bg_color: bgcolor_closed
+            - lvgl.label.update:
+                id: gate_label
+                text: "CLOSED"
+                text_color: fgcolor_off
+            - lvgl.label.update:
+                id: gate_hint
+                text: "tap to open"
+                text_color: fgcolor_off
+            - logger.log: "Gate tap — close (debounced)"
+            - homeassistant.action:
+                action: switch.turn_off
+                data:
+                  entity_id: ${gate_switch_entity}
+          else:
+            # Opening — optimistic UI, then switch.turn_on
+            - lvgl.widget.update:
+                id: gate_panel
+                bg_color: bgcolor_open
+            - lvgl.label.update:
+                id: gate_label
+                text: "OPEN"
+                text_color: fgcolor_on
+            - lvgl.label.update:
+                id: gate_hint
+                text: "tap to close"
+                text_color: fgcolor_on
+            - logger.log: "Gate tap — open (debounced)"
+            - homeassistant.action:
+                action: switch.turn_on
+                data:
+                  entity_id: ${gate_switch_entity}
+      - delay: 2s
+      - script.execute: update_gate_ui
+
+binary_sensor:
+  - platform: homeassistant
+    id: gate_valve
+    entity_id: ${gate_switch_entity}
+    publish_initial_state: true
+    on_state:
+      then:
+        - script.execute: update_gate_ui
+
+lvgl:
+  id: lvgl1
+  displays:
+    - disp1
+  touchscreens:
+    - ts_disp1
+  rotation: 90
+  full_refresh: true
+  buffer_size: 100%
+  color_depth: 16
+  bg_color: bgcolor_closed
+  default_font: font_hero
+  log_level: WARN
+  style_definitions:
+    - id: panel_style
+      border_width: 0
+      outline_width: 0
+      pad_all: 0
+      radius: 0
+      bg_opa: COVER
+    - id: label_style
+      border_width: 0
+      outline_width: 0
+      pad_all: 0
+      radius: 0
+      bg_opa: TRANSP
+      text_color: fgcolor_off
+      text_align: CENTER
+  pages:
+    - id: gate_page
+      bg_color: bgcolor_closed
+      scrollable: false
+      scrollbar_mode: "OFF"
+      scroll_chain: false
+      widgets:
+        - obj:
+            id: gate_panel
+            styles: panel_style
+            width: 100%
+            height: 100%
+            bg_color: bgcolor_closed
+            clickable: true
+            scrollable: false
+            scrollbar_mode: "OFF"
+            scroll_chain: false
+            on_short_click:
+              then:
+                - script.execute: gate_tap
+            widgets:
+              - label:
+                  id: gate_label
+                  styles: label_style
+                  align: CENTER
+                  y: -24
+                  text: "CLOSED"
+                  text_font: font_hero
+                  text_color: fgcolor_off
+                  text_align: CENTER
+                  clickable: false
+              - label:
+                  id: gate_hint
+                  styles: label_style
+                  align: CENTER
+                  y: 56
+                  text: "tap to open"
+                  text_font: font_sub
+                  text_color: fgcolor_off
+                  text_align: CENTER
+                  clickable: false
