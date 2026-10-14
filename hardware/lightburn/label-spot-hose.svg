@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="50mm" height="15mm" viewBox="0 0 50 15">
+  <rect x="0.4" y="0.4" width="49.2" height="14.2" rx="1" ry="1"
+        fill="none" stroke="#000000" stroke-width="0.1"/>
+  <text x="25" y="10" text-anchor="middle" font-family="Arial, Helvetica, sans-serif"
+        font-size="6" font-weight="bold" fill="#0000FF">SPOT HOSE</text>
+</svg>

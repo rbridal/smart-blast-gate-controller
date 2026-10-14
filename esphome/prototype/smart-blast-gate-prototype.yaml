@@ -1,0 +1,546 @@
+# Smart Blast Gate Prototype — single valve bench controller
+# Board: ESP32 DevKit (38-pin), MG996R on GPIO18
+# Reeds: RC-34A style. One lead → GND, other → GPIO pull-up.
+#   Magnet at stop → GPIO LOW. inverted: true → binary ON = at that stop.
+#
+# Desired vs Actual alignment supervisor:
+#   Desired = HA switch Blast Gate (command only; never overwritten by reeds)
+#   Actual  = text_sensor from reeds + motion (closed|open|moving|unknown|fault)
+#   Aligned = desired matches unambiguous actual
+#   Supervisor corrects misalignment (grace/debounce/cooldown/max retries) when
+#   "Alignment correction" is ON.
+#   Unknown + desired ON  → closed then open
+#   Unknown + desired OFF → open then closed
+#
+# Detach policy: HOLD PWM while open; only auto-detach after closing
+#   ("Closed detach time", 0 = also hold when closed).
+#
+# Boot: wait for 5V, apply closed-detach, then reseat valve closed.
+
+substitutions:
+  device_name: smart-blast-gate-prototype
+  friendly_name: Smart Blast Gate Prototype
+  boot_power_delay: "2s"
+  seat_delay: "1s"
+  reed_settle: "300ms"
+  pin_reed_closed: GPIO19
+  pin_reed_open: GPIO21
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    priority: -100
+    then:
+      - delay: ${boot_power_delay}
+      - script.execute: apply_detach_closed
+      - script.execute: seat_closed
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_encryption_key  # REDACTED
+
+ota:
+  - platform: esphome
+    password: !secret smart_blast_gate_prototype__ota_password
+
+wifi:
+  networks:
+    - id: wifi_shop
+      ssid: !secret wifi_ssid_shop
+      password: !secret wifi_password_shop
+    - id: wifi_house
+      ssid: !secret wifi_ssid_house
+      password: !secret wifi_password_house
+
+captive_portal:
+
+globals:
+  - id: motion_busy
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  - id: grace_until
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+
+  - id: misaligned_since
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+
+  - id: retry_count
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  - id: cooldown_until
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+
+  - id: align_fault
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+output:
+  - platform: ledc
+    id: servo_pwm
+    pin: GPIO18
+    frequency: 50 Hz
+
+servo:
+  - id: servo_gate
+    output: servo_pwm
+    # Overridden at runtime: 0 while open; Closed detach time while closing/closed.
+    auto_detach_time: 1.5s
+    transition_length: 800ms
+
+binary_sensor:
+  - platform: gpio
+    id: reed_closed
+    name: "Closed stop"
+    pin:
+      number: ${pin_reed_closed}
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    filters:
+      - delayed_on: 40ms
+      - delayed_off: 40ms
+
+  - platform: gpio
+    id: reed_open
+    name: "Open stop"
+    pin:
+      number: ${pin_reed_open}
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    filters:
+      - delayed_on: 40ms
+      - delayed_off: 40ms
+
+  # Aligned / fault: published by supervisor interval (~500ms)
+  - platform: template
+    name: "Aligned"
+    id: aligned_gate
+    device_class: connectivity
+    lambda: |-
+      const std::string &a = id(actual_gate).state;
+      bool desired = id(valve_gate).state;
+      return (desired && a == "open") || (!desired && a == "closed");
+
+  - platform: template
+    name: "Align fault"
+    id: align_fault_bs
+    device_class: problem
+    lambda: "return id(align_fault);"
+
+text_sensor:
+  - platform: template
+    name: "Actual"
+    id: actual_gate
+    icon: mdi:valve
+    update_interval: 250ms
+    lambda: |-
+      if (id(motion_busy)) return {std::string("moving")};
+      bool c = id(reed_closed).state;
+      bool o = id(reed_open).state;
+      if (c && o) return {std::string("fault")};
+      if (c && !o) return {std::string("closed")};
+      if (o && !c) return {std::string("open")};
+      return {std::string("unknown")};
+
+script:
+  - id: apply_hold_open
+    mode: single
+    then:
+      - lambda: "id(servo_gate).set_auto_detach_time(0);"
+      - logger.log: "Servo hold ON (open — never detach)"
+
+  - id: apply_detach_closed
+    mode: single
+    then:
+      - lambda: |-
+          id(servo_gate).set_auto_detach_time((uint32_t)(id(detach_time_s).state * 1000.0f));
+      - logger.log:
+          format: "Servo closed-detach = %.1f s"
+          args: ['id(detach_time_s).state']
+
+  - id: write_closed
+    mode: single
+    then:
+      - lambda: "id(motion_busy) = true;"
+      - script.execute: apply_detach_closed
+      - script.wait: apply_detach_closed
+      - servo.write:
+          id: servo_gate
+          level: !lambda "return id(closed_pct).state / 100.0;"
+      - delay: ${seat_delay}
+      - servo.write:
+          id: servo_gate
+          level: !lambda "return id(closed_pct).state / 100.0;"
+      - delay: ${reed_settle}
+      - if:
+          condition:
+            and:
+              - switch.is_on: reed_correction
+              - binary_sensor.is_off: reed_closed
+          then:
+            - logger.log: "Closed stop not seen — seat retry close"
+            - servo.write:
+                id: servo_gate
+                level: !lambda "return id(closed_pct).state / 100.0;"
+            - delay: ${seat_delay}
+            - servo.write:
+                id: servo_gate
+                level: !lambda "return id(closed_pct).state / 100.0;"
+            - delay: ${reed_settle}
+      - lambda: "id(motion_busy) = false;"
+
+  - id: write_open
+    mode: single
+    then:
+      - lambda: "id(motion_busy) = true;"
+      - script.execute: apply_hold_open
+      - script.wait: apply_hold_open
+      - servo.write:
+          id: servo_gate
+          level: !lambda "return id(open_pct).state / 100.0;"
+      - delay: ${seat_delay}
+      - servo.write:
+          id: servo_gate
+          level: !lambda "return id(open_pct).state / 100.0;"
+      - delay: ${reed_settle}
+      - if:
+          condition:
+            and:
+              - switch.is_on: reed_correction
+              - binary_sensor.is_off: reed_open
+          then:
+            - logger.log: "Open stop not seen — seat retry open"
+            - servo.write:
+                id: servo_gate
+                level: !lambda "return id(open_pct).state / 100.0;"
+            - delay: ${seat_delay}
+            - servo.write:
+                id: servo_gate
+                level: !lambda "return id(open_pct).state / 100.0;"
+            - delay: ${reed_settle}
+      - lambda: "id(motion_busy) = false;"
+
+  # Supervisor corrections (do not overwrite desired switch)
+  - id: correct_to_open
+    mode: single
+    then:
+      - logger.log: "Align correction → open"
+      - if:
+          condition:
+            lambda: 'return id(actual_gate).state == "unknown";'
+          then:
+            - script.execute: write_closed
+            - script.wait: write_closed
+      - script.execute: write_open
+      - script.wait: write_open
+
+  - id: correct_to_closed
+    mode: single
+    then:
+      - logger.log: "Align correction → closed"
+      # Unknown + desired OFF → open then closed (user choice)
+      - if:
+          condition:
+            lambda: 'return id(actual_gate).state == "unknown";'
+          then:
+            - script.execute: write_open
+            - script.wait: write_open
+      - script.execute: write_closed
+      - script.wait: write_closed
+
+  - id: seat_closed
+    mode: restart
+    then:
+      - lambda: |-
+          id(grace_until) = millis() + (uint32_t)(id(align_grace_s).state * 1000.0f);
+          id(misaligned_since) = 0;
+      - switch.template.publish:
+          id: valve_gate
+          state: OFF
+      - script.execute: write_closed
+      - script.wait: write_closed
+
+  - id: seat_open
+    mode: restart
+    then:
+      - lambda: |-
+          id(grace_until) = millis() + (uint32_t)(id(align_grace_s).state * 1000.0f);
+          id(misaligned_since) = 0;
+      - switch.template.publish:
+          id: valve_gate
+          state: ON
+      - script.execute: write_open
+      - script.wait: write_open
+
+  - id: seat_close
+    mode: restart
+    then:
+      - lambda: |-
+          id(grace_until) = millis() + (uint32_t)(id(align_grace_s).state * 1000.0f);
+          id(misaligned_since) = 0;
+      - switch.template.publish:
+          id: valve_gate
+          state: OFF
+      - script.execute: write_closed
+      - script.wait: write_closed
+
+  - id: clear_align_fault
+    mode: single
+    then:
+      - lambda: |-
+          id(align_fault) = false;
+          id(retry_count) = 0;
+          id(misaligned_since) = 0;
+      - logger.log: "Align fault cleared"
+
+switch:
+  - platform: template
+    name: "Blast Gate"
+    id: valve_gate
+    icon: mdi:valve
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - script.execute: seat_open
+    turn_off_action:
+      - script.execute: seat_close
+
+  - platform: template
+    name: "Alignment correction"
+    id: reed_correction
+    icon: mdi:magnet-on
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+number:
+  - platform: template
+    name: "Open %"
+    id: open_pct
+    icon: mdi:arrow-up-bold
+    min_value: -100
+    max_value: 100
+    step: 1
+    initial_value: 45
+    optimistic: true
+    restore_value: true
+    mode: BOX
+    set_action:
+      - if:
+          condition:
+            switch.is_on: valve_gate
+          then:
+            - script.execute: seat_open
+
+  - platform: template
+    name: "Closed %"
+    id: closed_pct
+    icon: mdi:arrow-down-bold
+    min_value: -100
+    max_value: 100
+    step: 1
+    initial_value: -69
+    optimistic: true
+    restore_value: true
+    mode: BOX
+    set_action:
+      - if:
+          condition:
+            switch.is_off: valve_gate
+          then:
+            - script.execute: seat_close
+
+  - platform: template
+    name: "Closed detach time"
+    id: detach_time_s
+    icon: mdi:timer-outline
+    unit_of_measurement: "s"
+    min_value: 0
+    max_value: 30
+    step: 0.5
+    initial_value: 1.5
+    optimistic: true
+    restore_value: true
+    mode: BOX
+    entity_category: config
+    set_action:
+      # Only apply while closed/closing; open always forces hold (0).
+      - if:
+          condition:
+            or:
+              - switch.is_off: valve_gate
+              - binary_sensor.is_on: reed_closed
+          then:
+            - script.execute: apply_detach_closed
+          else:
+            - script.execute: apply_hold_open
+
+  # ---- Alignment supervisor timing ----
+  - platform: template
+    name: "Align grace"
+    id: align_grace_s
+    icon: mdi:timer-sand
+    unit_of_measurement: "s"
+    entity_category: config
+    min_value: 0
+    max_value: 30
+    step: 0.5
+    initial_value: 4
+    optimistic: true
+    restore_value: true
+    mode: BOX
+
+  - platform: template
+    name: "Align debounce"
+    id: align_debounce_s
+    icon: mdi:timer-sand
+    unit_of_measurement: "s"
+    entity_category: config
+    min_value: 0
+    max_value: 30
+    step: 0.5
+    initial_value: 1.5
+    optimistic: true
+    restore_value: true
+    mode: BOX
+
+  - platform: template
+    name: "Align cooldown"
+    id: align_cooldown_s
+    icon: mdi:timer-sand
+    unit_of_measurement: "s"
+    entity_category: config
+    min_value: 0
+    max_value: 60
+    step: 0.5
+    initial_value: 5
+    optimistic: true
+    restore_value: true
+    mode: BOX
+
+  - platform: template
+    name: "Align max retries"
+    id: align_max_retries
+    icon: mdi:counter
+    entity_category: config
+    min_value: 1
+    max_value: 10
+    step: 1
+    initial_value: 3
+    optimistic: true
+    restore_value: true
+    mode: BOX
+
+  - platform: template
+    name: "Jog servo %"
+    id: jog_servo
+    min_value: -100
+    max_value: 100
+    step: 1
+    initial_value: 0
+    optimistic: true
+    mode: BOX
+    set_action:
+      - servo.write:
+          id: servo_gate
+          level: !lambda "return x / 100.0;"
+
+button:
+  - platform: template
+    name: "Reseat closed"
+    icon: mdi:reload
+    on_press:
+      - script.execute: seat_closed
+
+  - platform: template
+    name: "Clear align fault"
+    icon: mdi:alert-remove
+    entity_category: config
+    on_press:
+      - script.execute: clear_align_fault
+
+interval:
+  - interval: 500ms
+    then:
+      - lambda: |-
+          // Publish aligned / fault sensors each tick
+          {
+            const std::string &a = id(actual_gate).state;
+            bool desired = id(valve_gate).state;
+            bool al = (desired && a == "open") || (!desired && a == "closed");
+            id(aligned_gate).publish_state(al);
+            id(align_fault_bs).publish_state(id(align_fault));
+          }
+
+          // ---- Single gate supervisor ----
+          if (id(reed_correction).state && !id(align_fault) && !id(motion_busy)) {
+            uint32_t now = millis();
+            if ((int32_t)(now - id(grace_until)) >= 0 &&
+                (int32_t)(now - id(cooldown_until)) >= 0) {
+              std::string actual = id(actual_gate).state;
+              bool desired = id(valve_gate).state;
+              bool is_aligned = (desired && actual == "open") || (!desired && actual == "closed");
+
+              if (is_aligned) {
+                id(retry_count) = 0;
+                id(misaligned_since) = 0;
+                id(align_fault) = false;
+                if (desired) {
+                  id(servo_gate).set_auto_detach_time(0);
+                } else {
+                  id(servo_gate).set_auto_detach_time((uint32_t)(id(detach_time_s).state * 1000.0f));
+                }
+              } else if (actual == "moving") {
+                // wait
+              } else if (actual == "fault") {
+                id(align_fault) = true;
+                ESP_LOGW("align", "Reed FAULT (both ON) — latching align fault");
+              } else {
+                // misaligned: closed/open wrong, or unknown
+                if (id(misaligned_since) == 0) {
+                  id(misaligned_since) = now;
+                }
+                uint32_t deb_ms = (uint32_t)(id(align_debounce_s).state * 1000.0f);
+                if ((int32_t)(now - id(misaligned_since)) >= (int32_t)deb_ms) {
+                  id(retry_count) += 1;
+                  int max_r = (int)id(align_max_retries).state;
+                  if (id(retry_count) > max_r) {
+                    id(align_fault) = true;
+                    ESP_LOGW("align", "Align fault after %d retries", id(retry_count));
+                  } else {
+                    id(cooldown_until) = now + (uint32_t)(id(align_cooldown_s).state * 1000.0f);
+                    id(misaligned_since) = 0;
+                    ESP_LOGI("align", "Correction #%d desired=%s actual=%s",
+                             id(retry_count), desired ? "ON" : "OFF", actual.c_str());
+                    if (desired) {
+                      id(correct_to_open).execute();
+                    } else {
+                      id(correct_to_closed).execute();
+                    }
+                  }
+                }
+              }
+            }
+          }

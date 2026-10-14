@@ -1,0 +1,103 @@
+# Exported from the Shop Home Assistant on 2026-10-14 (UI automations, YAML view).
+# Webhook id redacted. Entity ids are the live ones.
+
+- id: "1788887613930"
+  alias: Dust Collection / Smart Blast Gate / CNC
+  description: >-
+    Spindle running opens/closes CNC blast gate. Debounced so brief power
+    blips do not chatter the gate.
+  triggers:
+    - trigger: state
+      entity_id: binary_sensor.dust_collection_cnc_desired
+      from: "off"
+      to: "on"
+      for: { seconds: 2 }
+      id: desired-on
+    - trigger: state
+      entity_id: binary_sensor.dust_collection_cnc_desired
+      from: "on"
+      to: "off"
+      for: { seconds: 2 }
+      id: desired-off
+  actions:
+    - choose:
+        - conditions: [{ condition: trigger, id: desired-on }]
+          sequence:
+            - action: switch.turn_on
+              target: { entity_id: switch.smart_blast_gate_cnc_blast_gate }
+        - conditions: [{ condition: trigger, id: desired-off }]
+          sequence:
+            - action: switch.turn_off
+              target: { entity_id: switch.smart_blast_gate_cnc_blast_gate }
+  mode: single
+
+- id: "1789777364463"
+  alias: Dust Collection / Smart Blast Gate / CNC Override
+  description: Override auto-clears when the spindle stops and cannot be armed while it is off.
+  triggers:
+    - trigger: state
+      entity_id: binary_sensor.shop_cnc_spindle_running
+      from: "on"
+      to: "off"
+      for: { seconds: 2 }
+      id: spindle-stopped
+    - trigger: state
+      entity_id: input_boolean.dust_collection_cnc_override
+      to: "on"
+      id: override-on
+  actions:
+    - choose:
+        - conditions: [{ condition: trigger, id: spindle-stopped }]
+          sequence:
+            - action: input_boolean.turn_off
+              target: { entity_id: input_boolean.dust_collection_cnc_override }
+        - conditions:
+            - condition: trigger
+              id: override-on
+            - condition: state
+              entity_id: binary_sensor.shop_cnc_spindle_running
+              state: "off"
+          sequence:
+            - action: input_boolean.turn_off
+              target: { entity_id: input_boolean.dust_collection_cnc_override }
+  mode: single
+
+- id: "1788867869068"
+  alias: Dust Collection / Smart Blast Gate / Hose
+  description: Physical button (webhook POST) toggles the spot hose gate.
+  triggers:
+    - trigger: webhook
+      allowed_methods: [POST]
+      local_only: false
+      webhook_id: !secret shop_vac_toggle_webhook_id   # REDACTED
+      id: toggle
+  actions:
+    - action: button.press
+      target: { entity_id: button.dust_collection_hose_toggle }
+  mode: single
+
+- id: "1788888262919"
+  alias: Dust Collection / Shop Vac
+  description: Vac (YoLink outlet) follows "any gate requests suction".
+  triggers:
+    - trigger: state
+      entity_id: binary_sensor.dust_collection_shop_vac_requested
+      from: "off"
+      to: "on"
+      id: requested-on
+    - trigger: state
+      entity_id: binary_sensor.dust_collection_shop_vac_requested
+      from: "on"
+      to: "off"
+      id: requested-off
+  actions:
+    - choose:
+        - conditions: [{ condition: trigger, id: requested-on }]
+          sequence:
+            - action: switch.turn_on
+              target: { entity_id: switch.shop_vacuum_switch }
+        - conditions: [{ condition: trigger, id: requested-off }]
+          sequence:
+            - action: switch.turn_off
+              target: { entity_id: switch.shop_vacuum_switch }
+  mode: single
