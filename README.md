@@ -6,7 +6,9 @@ end stops of each valve, a round touch display for status/override, and Home
 Assistant deciding *when* suction is wanted (spindle current via Shelly EM,
 buttons, display taps) and switching the shop vac.
 
-> 📷 _Photo placeholder — current install (enclosure not finished yet). Add `docs/img/install.jpg`._
+![Current install: dual servo blast gates and controller board on the wall panel, with the CNC display above. The enclosure top and sides are not on yet.](docs/images/install-2026-10.jpg)
+
+_Current install, October 2026. The enclosure top and sides are still to come. The panel above the gates is the CNC display._
 
 **Secrets:** every key/password/SSID here is a `!secret` reference. Bring your own `secrets.yaml`.
 
