@@ -1,0 +1,120 @@
+interval:
+  - interval: 500ms
+    then:
+      - lambda: |-
+          // Publish aligned / fault sensors each tick
+          {
+            const std::string &a = id(actual_cnc).state;
+            bool desired = id(valve_cnc).state;
+            bool al = (desired && a == "open") || (!desired && a == "closed");
+            id(aligned_cnc).publish_state(al);
+            id(align_fault_cnc_bs).publish_state(id(align_fault_cnc));
+          }
+          {
+            const std::string &a = id(actual_hose).state;
+            bool desired = id(valve_hose).state;
+            bool al = (desired && a == "open") || (!desired && a == "closed");
+            id(aligned_hose).publish_state(al);
+            id(align_fault_hose_bs).publish_state(id(align_fault_hose));
+          }
+
+          // ---- CNC gate supervisor ----
+          if (id(reed_correction).state && !id(align_fault_cnc) && !id(motion_busy_cnc)) {
+            uint32_t now = millis();
+            if ((int32_t)(now - id(grace_until_cnc)) >= 0 &&
+                (int32_t)(now - id(cooldown_until_cnc)) >= 0) {
+              std::string actual = id(actual_cnc).state;
+              bool desired = id(valve_cnc).state;
+              bool is_aligned = (desired && actual == "open") || (!desired && actual == "closed");
+
+              if (is_aligned) {
+                id(retry_count_cnc) = 0;
+                id(misaligned_since_cnc) = 0;
+                id(align_fault_cnc) = false;
+                if (desired) {
+                  id(servo_cnc).set_auto_detach_time(0);
+                } else {
+                  id(servo_cnc).set_auto_detach_time((uint32_t)(id(detach_time_s).state * 1000.0f));
+                }
+              } else if (actual == "moving") {
+                // wait
+              } else if (actual == "fault") {
+                id(align_fault_cnc) = true;
+                ESP_LOGW("align", "CNC reed FAULT (both ON) — latching align fault");
+              } else {
+                // misaligned: closed/open wrong, or unknown
+                if (id(misaligned_since_cnc) == 0) {
+                  id(misaligned_since_cnc) = now;
+                }
+                uint32_t deb_ms = (uint32_t)(id(align_debounce_s).state * 1000.0f);
+                if ((int32_t)(now - id(misaligned_since_cnc)) >= (int32_t)deb_ms) {
+                  id(retry_count_cnc) += 1;
+                  int max_r = (int)id(align_max_retries).state;
+                  if (id(retry_count_cnc) > max_r) {
+                    id(align_fault_cnc) = true;
+                    ESP_LOGW("align", "CNC align fault after %d retries", id(retry_count_cnc));
+                  } else {
+                    id(cooldown_until_cnc) = now + (uint32_t)(id(align_cooldown_s).state * 1000.0f);
+                    id(misaligned_since_cnc) = 0;
+                    ESP_LOGI("align", "CNC correction #%d desired=%s actual=%s",
+                             id(retry_count_cnc), desired ? "ON" : "OFF", actual.c_str());
+                    if (desired) {
+                      id(correct_cnc_to_open).execute();
+                    } else {
+                      id(correct_cnc_to_closed).execute();
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          // ---- Hose gate supervisor ----
+          if (id(reed_correction).state && !id(align_fault_hose) && !id(motion_busy_hose)) {
+            uint32_t now = millis();
+            if ((int32_t)(now - id(grace_until_hose)) >= 0 &&
+                (int32_t)(now - id(cooldown_until_hose)) >= 0) {
+              std::string actual = id(actual_hose).state;
+              bool desired = id(valve_hose).state;
+              bool is_aligned = (desired && actual == "open") || (!desired && actual == "closed");
+
+              if (is_aligned) {
+                id(retry_count_hose) = 0;
+                id(misaligned_since_hose) = 0;
+                id(align_fault_hose) = false;
+                if (desired) {
+                  id(servo_hose).set_auto_detach_time(0);
+                } else {
+                  id(servo_hose).set_auto_detach_time((uint32_t)(id(detach_time_s).state * 1000.0f));
+                }
+              } else if (actual == "moving") {
+                // wait
+              } else if (actual == "fault") {
+                id(align_fault_hose) = true;
+                ESP_LOGW("align", "Hose reed FAULT (both ON) — latching align fault");
+              } else {
+                if (id(misaligned_since_hose) == 0) {
+                  id(misaligned_since_hose) = now;
+                }
+                uint32_t deb_ms = (uint32_t)(id(align_debounce_s).state * 1000.0f);
+                if ((int32_t)(now - id(misaligned_since_hose)) >= (int32_t)deb_ms) {
+                  id(retry_count_hose) += 1;
+                  int max_r = (int)id(align_max_retries).state;
+                  if (id(retry_count_hose) > max_r) {
+                    id(align_fault_hose) = true;
+                    ESP_LOGW("align", "Hose align fault after %d retries", id(retry_count_hose));
+                  } else {
+                    id(cooldown_until_hose) = now + (uint32_t)(id(align_cooldown_s).state * 1000.0f);
+                    id(misaligned_since_hose) = 0;
+                    ESP_LOGI("align", "Hose correction #%d desired=%s actual=%s",
+                             id(retry_count_hose), desired ? "ON" : "OFF", actual.c_str());
+                    if (desired) {
+                      id(correct_hose_to_open).execute();
+                    } else {
+                      id(correct_hose_to_closed).execute();
+                    }
+                  }
+                }
+              }
+            }
+          }

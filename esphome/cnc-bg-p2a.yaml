@@ -1,0 +1,156 @@
+script:
+  - id: apply_hold_open_cnc
+    mode: single
+    then:
+      - lambda: "id(servo_cnc).set_auto_detach_time(0);"
+      - logger.log: "CNC servo hold ON (open — never detach)"
+
+  - id: apply_detach_closed_cnc
+    mode: single
+    then:
+      - lambda: |-
+          id(servo_cnc).set_auto_detach_time((uint32_t)(id(detach_time_s).state * 1000.0f));
+      - logger.log:
+          format: "CNC closed-detach = %.1f s"
+          args: ['id(detach_time_s).state']
+
+  - id: apply_hold_open_hose
+    mode: single
+    then:
+      - lambda: "id(servo_hose).set_auto_detach_time(0);"
+      - logger.log: "Hose servo hold ON (open — never detach)"
+
+  - id: apply_detach_closed_hose
+    mode: single
+    then:
+      - lambda: |-
+          id(servo_hose).set_auto_detach_time((uint32_t)(id(detach_time_s).state * 1000.0f));
+      - logger.log:
+          format: "Hose closed-detach = %.1f s"
+          args: ['id(detach_time_s).state']
+
+  - id: write_cnc_closed
+    mode: single
+    then:
+      - lambda: "id(motion_busy_cnc) = true;"
+      - script.execute: apply_detach_closed_cnc
+      - script.wait: apply_detach_closed_cnc
+      - servo.write:
+          id: servo_cnc
+          level: !lambda "return id(cnc_closed_pct).state / 100.0;"
+      - delay: ${seat_delay}
+      - servo.write:
+          id: servo_cnc
+          level: !lambda "return id(cnc_closed_pct).state / 100.0;"
+      - delay: ${reed_settle}
+      - if:
+          condition:
+            and:
+              - switch.is_on: reed_correction
+              - binary_sensor.is_off: reed_cnc_closed
+          then:
+            - logger.log: "CNC closed stop not seen — seat retry close"
+            - servo.write:
+                id: servo_cnc
+                level: !lambda "return id(cnc_closed_pct).state / 100.0;"
+            - delay: ${seat_delay}
+            - servo.write:
+                id: servo_cnc
+                level: !lambda "return id(cnc_closed_pct).state / 100.0;"
+            - delay: ${reed_settle}
+      - lambda: "id(motion_busy_cnc) = false;"
+
+  - id: write_cnc_open
+    mode: single
+    then:
+      - lambda: "id(motion_busy_cnc) = true;"
+      - script.execute: apply_hold_open_cnc
+      - script.wait: apply_hold_open_cnc
+      - servo.write:
+          id: servo_cnc
+          level: !lambda "return id(cnc_open_pct).state / 100.0;"
+      - delay: ${seat_delay}
+      - servo.write:
+          id: servo_cnc
+          level: !lambda "return id(cnc_open_pct).state / 100.0;"
+      - delay: ${reed_settle}
+      - if:
+          condition:
+            and:
+              - switch.is_on: reed_correction
+              - binary_sensor.is_off: reed_cnc_open
+          then:
+            - logger.log: "CNC open stop not seen — seat retry open"
+            - servo.write:
+                id: servo_cnc
+                level: !lambda "return id(cnc_open_pct).state / 100.0;"
+            - delay: ${seat_delay}
+            - servo.write:
+                id: servo_cnc
+                level: !lambda "return id(cnc_open_pct).state / 100.0;"
+            - delay: ${reed_settle}
+      - lambda: "id(motion_busy_cnc) = false;"
+
+  - id: write_hose_closed
+    mode: single
+    then:
+      - lambda: "id(motion_busy_hose) = true;"
+      - script.execute: apply_detach_closed_hose
+      - script.wait: apply_detach_closed_hose
+      - servo.write:
+          id: servo_hose
+          level: !lambda "return id(hose_closed_pct).state / 100.0;"
+      - delay: ${seat_delay}
+      - servo.write:
+          id: servo_hose
+          level: !lambda "return id(hose_closed_pct).state / 100.0;"
+      - delay: ${reed_settle}
+      - if:
+          condition:
+            and:
+              - switch.is_on: reed_correction
+              - binary_sensor.is_off: reed_hose_closed
+          then:
+            - logger.log: "Hose closed stop not seen — seat retry close"
+            - servo.write:
+                id: servo_hose
+                level: !lambda "return id(hose_closed_pct).state / 100.0;"
+            - delay: ${seat_delay}
+            - servo.write:
+                id: servo_hose
+                level: !lambda "return id(hose_closed_pct).state / 100.0;"
+            - delay: ${reed_settle}
+      - lambda: "id(motion_busy_hose) = false;"
+
+  - id: write_hose_open
+    mode: single
+    then:
+      - lambda: "id(motion_busy_hose) = true;"
+      - script.execute: apply_hold_open_hose
+      - script.wait: apply_hold_open_hose
+      - servo.write:
+          id: servo_hose
+          level: !lambda "return id(hose_open_pct).state / 100.0;"
+      - delay: ${seat_delay}
+      - servo.write:
+          id: servo_hose
+          level: !lambda "return id(hose_open_pct).state / 100.0;"
+      - delay: ${reed_settle}
+      - if:
+          condition:
+            and:
+              - switch.is_on: reed_correction
+              - binary_sensor.is_off: reed_hose_open
+          then:
+            - logger.log: "Hose open stop not seen — seat retry open"
+            - servo.write:
+                id: servo_hose
+                level: !lambda "return id(hose_open_pct).state / 100.0;"
+            - delay: ${seat_delay}
+            - servo.write:
+                id: servo_hose
+                level: !lambda "return id(hose_open_pct).state / 100.0;"
+            - delay: ${reed_settle}
+      - lambda: "id(motion_busy_hose) = false;"
+
+  # Supervisor corrections (do not overwrite desired switches)

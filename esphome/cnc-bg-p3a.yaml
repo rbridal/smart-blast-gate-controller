@@ -1,0 +1,252 @@
+switch:
+  - platform: template
+    name: "CNC Blast Gate"
+    id: valve_cnc
+    icon: mdi:robot-industrial
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - script.execute: seat_cnc_open
+    turn_off_action:
+      - script.execute: seat_cnc_closed
+
+  - platform: template
+    name: "Hose Blast Gate"
+    id: valve_hose
+    icon: mdi:circle-slice-8
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - script.execute: seat_hose_open
+    turn_off_action:
+      - script.execute: seat_hose_closed
+
+  - platform: template
+    name: "Alignment correction"
+    id: reed_correction
+    icon: mdi:magnet-on
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+number:
+  # ---- Vac coast-down when closing the last open gate (edit in HA) ----
+  - platform: template
+    name: "Last-gate close delay"
+    id: last_gate_close_delay_s
+    icon: mdi:timer-outline
+    unit_of_measurement: "s"
+    min_value: 0
+    max_value: 15
+    step: 0.5
+    initial_value: 3
+    optimistic: true
+    restore_value: true
+    mode: BOX
+
+  # ---- Closed-only detach (shared by both servos) ----
+  - platform: template
+    name: "Closed detach time"
+    id: detach_time_s
+    icon: mdi:timer-outline
+    unit_of_measurement: "s"
+    min_value: 0
+    max_value: 30
+    step: 0.5
+    initial_value: 1.5
+    optimistic: true
+    restore_value: true
+    mode: BOX
+    entity_category: config
+    set_action:
+      # Only apply while that valve is closed/closing; open always forces hold (0).
+      - if:
+          condition:
+            or:
+              - switch.is_off: valve_cnc
+              - binary_sensor.is_on: reed_cnc_closed
+          then:
+            - script.execute: apply_detach_closed_cnc
+          else:
+            - script.execute: apply_hold_open_cnc
+      - if:
+          condition:
+            or:
+              - switch.is_off: valve_hose
+              - binary_sensor.is_on: reed_hose_closed
+          then:
+            - script.execute: apply_detach_closed_hose
+          else:
+            - script.execute: apply_hold_open_hose
+
+  # ---- Alignment supervisor timing ----
+  - platform: template
+    name: "Align grace"
+    id: align_grace_s
+    icon: mdi:timer-sand
+    unit_of_measurement: "s"
+    entity_category: config
+    min_value: 0
+    max_value: 30
+    step: 0.5
+    initial_value: 4
+    optimistic: true
+    restore_value: true
+    mode: BOX
+
+  - platform: template
+    name: "Align debounce"
+    id: align_debounce_s
+    icon: mdi:timer-sand
+    unit_of_measurement: "s"
+    entity_category: config
+    min_value: 0
+    max_value: 30
+    step: 0.5
+    initial_value: 1.5
+    optimistic: true
+    restore_value: true
+    mode: BOX
+
+  - platform: template
+    name: "Align cooldown"
+    id: align_cooldown_s
+    icon: mdi:timer-sand
+    unit_of_measurement: "s"
+    entity_category: config
+    min_value: 0
+    max_value: 60
+    step: 0.5
+    initial_value: 5
+    optimistic: true
+    restore_value: true
+    mode: BOX
+
+  - platform: template
+    name: "Align max retries"
+    id: align_max_retries
+    icon: mdi:counter
+    entity_category: config
+    min_value: 1
+    max_value: 10
+    step: 1
+    initial_value: 3
+    optimistic: true
+    restore_value: true
+    mode: BOX
+
+  # ---- Persisted limits (edit in HA, no reflash) ----
+  - platform: template
+    name: "CNC open %"
+    id: cnc_open_pct
+    icon: mdi:arrow-up-bold
+    min_value: -100
+    max_value: 100
+    step: 1
+    initial_value: 45
+    optimistic: true
+    restore_value: true
+    mode: BOX
+    set_action:
+      - if:
+          condition:
+            switch.is_on: valve_cnc
+          then:
+            - script.execute: seat_cnc_open
+
+  - platform: template
+    name: "CNC closed %"
+    id: cnc_closed_pct
+    icon: mdi:arrow-down-bold
+    min_value: -100
+    max_value: 100
+    step: 1
+    initial_value: -69
+    optimistic: true
+    restore_value: true
+    mode: BOX
+    set_action:
+      - if:
+          condition:
+            switch.is_off: valve_cnc
+          then:
+            - script.execute: seat_cnc_closed
+
+  - platform: template
+    name: "Hose open %"
+    id: hose_open_pct
+    icon: mdi:arrow-up-bold
+    min_value: -100
+    max_value: 100
+    step: 1
+    initial_value: 69
+    optimistic: true
+    restore_value: true
+    mode: BOX
+    set_action:
+      - if:
+          condition:
+            switch.is_on: valve_hose
+          then:
+            - script.execute: seat_hose_open
+
+  - platform: template
+    name: "Hose closed %"
+    id: hose_closed_pct
+    icon: mdi:arrow-down-bold
+    min_value: -100
+    max_value: 100
+    step: 1
+    initial_value: -42
+    optimistic: true
+    restore_value: true
+    mode: BOX
+    set_action:
+      - if:
+          condition:
+            switch.is_off: valve_hose
+          then:
+            - script.execute: seat_hose_closed
+
+  # ---- Live jog (does not change saved limits) ----
+  - platform: template
+    name: "Jog CNC servo %"
+    id: jog_cnc
+    min_value: -100
+    max_value: 100
+    step: 1
+    initial_value: 0
+    optimistic: true
+    mode: BOX
+    set_action:
+      - servo.write:
+          id: servo_cnc
+          level: !lambda "return x / 100.0;"
+
+  - platform: template
+    name: "Jog Hose servo %"
+    id: jog_hose
+    min_value: -100
+    max_value: 100
+    step: 1
+    initial_value: 0
+    optimistic: true
+    mode: BOX
+    set_action:
+      - servo.write:
+          id: servo_hose
+          level: !lambda "return x / 100.0;"
+
+button:
+  - platform: template
+    name: "Reseat both closed"
+    icon: mdi:reload
+    on_press:
+      - script.execute: seat_both_closed
+
+  - platform: template
+    name: "Clear align fault"
+    icon: mdi:alert-remove
+    entity_category: config
+    on_press:
+      - script.execute: clear_align_faults

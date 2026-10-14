@@ -1,0 +1,158 @@
+script:
+  - id: correct_cnc_to_open
+    mode: single
+    then:
+      - logger.log: "CNC align correction → open"
+      - if:
+          condition:
+            lambda: 'return id(actual_cnc).state == "unknown";'
+          then:
+            - script.execute: write_cnc_closed
+            - script.wait: write_cnc_closed
+      - script.execute: write_cnc_open
+      - script.wait: write_cnc_open
+
+  - id: correct_cnc_to_closed
+    mode: single
+    then:
+      - logger.log: "CNC align correction → closed"
+      # Last open gate (hose already closed/desired closed) → vac coast-down
+      - if:
+          condition:
+            switch.is_off: valve_hose
+          then:
+            - delay: !lambda |-
+                return (uint32_t)(id(last_gate_close_delay_s).state * 1000.0f);
+      - if:
+          condition:
+            lambda: 'return id(actual_cnc).state == "unknown";'
+          then:
+            - script.execute: write_cnc_open
+            - script.wait: write_cnc_open
+      - script.execute: write_cnc_closed
+      - script.wait: write_cnc_closed
+
+  - id: correct_hose_to_open
+    mode: single
+    then:
+      - logger.log: "Hose align correction → open"
+      - if:
+          condition:
+            lambda: 'return id(actual_hose).state == "unknown";'
+          then:
+            - script.execute: write_hose_closed
+            - script.wait: write_hose_closed
+      - script.execute: write_hose_open
+      - script.wait: write_hose_open
+
+  - id: correct_hose_to_closed
+    mode: single
+    then:
+      - logger.log: "Hose align correction → closed"
+      - if:
+          condition:
+            switch.is_off: valve_cnc
+          then:
+            - delay: !lambda |-
+                return (uint32_t)(id(last_gate_close_delay_s).state * 1000.0f);
+      - if:
+          condition:
+            lambda: 'return id(actual_hose).state == "unknown";'
+          then:
+            - script.execute: write_hose_open
+            - script.wait: write_hose_open
+      - script.execute: write_hose_closed
+      - script.wait: write_hose_closed
+
+  - id: seat_both_closed
+    mode: restart
+    then:
+      - lambda: |-
+          id(grace_until_cnc) = millis() + (uint32_t)(id(align_grace_s).state * 1000.0f);
+          id(grace_until_hose) = millis() + (uint32_t)(id(align_grace_s).state * 1000.0f);
+          id(misaligned_since_cnc) = 0;
+          id(misaligned_since_hose) = 0;
+      - switch.template.publish:
+          id: valve_cnc
+          state: OFF
+      - switch.template.publish:
+          id: valve_hose
+          state: OFF
+      - script.execute: write_cnc_closed
+      - script.wait: write_cnc_closed
+      - script.execute: write_hose_closed
+      - script.wait: write_hose_closed
+
+  - id: seat_cnc_open
+    mode: restart
+    then:
+      - lambda: |-
+          id(grace_until_cnc) = millis() + (uint32_t)(id(align_grace_s).state * 1000.0f);
+          id(misaligned_since_cnc) = 0;
+      - switch.template.publish:
+          id: valve_cnc
+          state: ON
+      - script.execute: write_cnc_open
+      - script.wait: write_cnc_open
+
+  - id: seat_cnc_closed
+    mode: restart
+    then:
+      - lambda: |-
+          id(grace_until_cnc) = millis() + (uint32_t)(id(align_grace_s).state * 1000.0f);
+          id(misaligned_since_cnc) = 0;
+      # Last open gate (hose already closed) → wait for vac coast-down
+      - if:
+          condition:
+            switch.is_off: valve_hose
+          then:
+            - delay: !lambda |-
+                return (uint32_t)(id(last_gate_close_delay_s).state * 1000.0f);
+      - switch.template.publish:
+          id: valve_cnc
+          state: OFF
+      - script.execute: write_cnc_closed
+      - script.wait: write_cnc_closed
+
+  - id: seat_hose_open
+    mode: restart
+    then:
+      - lambda: |-
+          id(grace_until_hose) = millis() + (uint32_t)(id(align_grace_s).state * 1000.0f);
+          id(misaligned_since_hose) = 0;
+      - switch.template.publish:
+          id: valve_hose
+          state: ON
+      - script.execute: write_hose_open
+      - script.wait: write_hose_open
+
+  - id: seat_hose_closed
+    mode: restart
+    then:
+      - lambda: |-
+          id(grace_until_hose) = millis() + (uint32_t)(id(align_grace_s).state * 1000.0f);
+          id(misaligned_since_hose) = 0;
+      # Last open gate (CNC already closed) → wait for vac coast-down
+      - if:
+          condition:
+            switch.is_off: valve_cnc
+          then:
+            - delay: !lambda |-
+                return (uint32_t)(id(last_gate_close_delay_s).state * 1000.0f);
+      - switch.template.publish:
+          id: valve_hose
+          state: OFF
+      - script.execute: write_hose_closed
+      - script.wait: write_hose_closed
+
+  - id: clear_align_faults
+    mode: single
+    then:
+      - lambda: |-
+          id(align_fault_cnc) = false;
+          id(align_fault_hose) = false;
+          id(retry_count_cnc) = 0;
+          id(retry_count_hose) = 0;
+          id(misaligned_since_cnc) = 0;
+          id(misaligned_since_hose) = 0;
+      - logger.log: "Align faults cleared"
