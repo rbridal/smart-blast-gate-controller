@@ -1,0 +1,135 @@
+output:
+  - platform: ledc
+    id: servo_cnc_pwm
+    pin: GPIO18
+    frequency: 50 Hz
+
+  - platform: ledc
+    id: servo_hose_pwm
+    pin: GPIO19
+    frequency: 50 Hz
+
+servo:
+  - id: servo_cnc
+    output: servo_cnc_pwm
+    # Overridden at runtime: 0 while open; Closed detach time while closing/closed.
+    auto_detach_time: 1.5s
+    transition_length: 800ms
+
+  - id: servo_hose
+    output: servo_hose_pwm
+    auto_detach_time: 1.5s
+    transition_length: 800ms
+
+binary_sensor:
+  - platform: gpio
+    id: reed_cnc_closed
+    name: "CNC Closed stop"
+    pin:
+      number: ${pin_cnc_reed_closed}
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    filters:
+      - delayed_on: 40ms
+      - delayed_off: 40ms
+
+  - platform: gpio
+    id: reed_cnc_open
+    name: "CNC Open stop"
+    pin:
+      number: ${pin_cnc_reed_open}
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    filters:
+      - delayed_on: 40ms
+      - delayed_off: 40ms
+
+  - platform: gpio
+    id: reed_hose_closed
+    name: "Hose Closed stop"
+    pin:
+      number: ${pin_hose_reed_closed}
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    filters:
+      - delayed_on: 40ms
+      - delayed_off: 40ms
+
+  - platform: gpio
+    id: reed_hose_open
+    name: "Hose Open stop"
+    pin:
+      number: ${pin_hose_reed_open}
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    filters:
+      - delayed_on: 40ms
+      - delayed_off: 40ms
+
+  # Aligned / fault: published by supervisor interval (~500ms)
+  - platform: template
+    name: "CNC aligned"
+    id: aligned_cnc
+    device_class: connectivity
+    lambda: |-
+      const std::string &a = id(actual_cnc).state;
+      bool desired = id(valve_cnc).state;
+      return (desired && a == "open") || (!desired && a == "closed");
+
+  - platform: template
+    name: "Hose aligned"
+    id: aligned_hose
+    device_class: connectivity
+    lambda: |-
+      const std::string &a = id(actual_hose).state;
+      bool desired = id(valve_hose).state;
+      return (desired && a == "open") || (!desired && a == "closed");
+
+  - platform: template
+    name: "CNC align fault"
+    id: align_fault_cnc_bs
+    device_class: problem
+    lambda: "return id(align_fault_cnc);"
+
+  - platform: template
+    name: "Hose align fault"
+    id: align_fault_hose_bs
+    device_class: problem
+    lambda: "return id(align_fault_hose);"
+
+text_sensor:
+  - platform: template
+    name: "CNC actual"
+    id: actual_cnc
+    icon: mdi:valve
+    update_interval: 250ms
+    lambda: |-
+      if (id(motion_busy_cnc)) return {std::string("moving")};
+      bool c = id(reed_cnc_closed).state;
+      bool o = id(reed_cnc_open).state;
+      if (c && o) return {std::string("fault")};
+      if (c && !o) return {std::string("closed")};
+      if (o && !c) return {std::string("open")};
+      return {std::string("unknown")};
+
+  - platform: template
+    name: "Hose actual"
+    id: actual_hose
+    icon: mdi:valve
+    update_interval: 250ms
+    lambda: |-
+      if (id(motion_busy_hose)) return {std::string("moving")};
+      bool c = id(reed_hose_closed).state;
+      bool o = id(reed_hose_open).state;
+      if (c && o) return {std::string("fault")};
+      if (c && !o) return {std::string("closed")};
+      if (o && !c) return {std::string("open")};
+      return {std::string("unknown")};
