@@ -40,7 +40,7 @@ detach. Closing the last open gate waits for the vac to coast down. Details:
 |---|---|---|
 | 1 | ESP32 DevKit, 38-pin (`esp32dev`) | Controller |
 | 2 | MG996R servo | **Metal 25T horns + threadlocker** (stock horns stripped) |
-| 2 | 2½″ printed ball valve (case/rotator/bearings) | Translucent PETG; TPU flange seals |
+| 2 | 2½″ printed ball valve (case/rotator/bearings) | PLA (PETG was too fragile); TPU flange seals |
 | 4 | RC-34A-style reed switch | One per end stop, set in the printed stops |
 | 2+ | Small neodymium magnets | On the 60 mm double horn |
 | 2 | 5 V supplies (servo / logic) | Common GND — see ADR 0007. Ratings: **unknown** |
