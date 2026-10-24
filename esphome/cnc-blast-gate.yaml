@@ -8,6 +8,8 @@
 #   Aligned = desired matches unambiguous actual
 #   Supervisor corrects misalignment (grace/debounce/cooldown/max retries) when
 #   "Alignment correction" is ON.
+#   A new desired state preempts that gate's in-flight move/retry/correction
+#   (cnc-bg-p2c.yaml); gates are fully independent.
 #
 # Reeds: one lead → GND, other → GPIO pull-up.
 #   Magnet at stop → GPIO LOW. inverted: true → binary ON = at that stop.
@@ -22,9 +24,6 @@
 # If the other gate is still open: close immediately.
 #
 # Boot: wait for 5V, apply closed-detach, then reseat both valves closed.
-#
-# REDACTED: API encryption key and secrets replaced with placeholders.
-# Use your own !secret references in production.
 
 substitutions:
   device_name: smart-blast-gate
@@ -61,7 +60,7 @@ logger:
 
 api:
   encryption:
-    key: !secret smart_blast_gate__api_encryption_key  # REDACTED — generate your own
+    key: !secret smart_blast_gate_api_key
 
 ota:
   - platform: esphome
@@ -138,5 +137,6 @@ packages:
   p1: !include cnc-bg-p1.yaml
   p2a: !include cnc-bg-p2a.yaml
   p2b: !include cnc-bg-p2b.yaml
+  p2c: !include cnc-bg-p2c.yaml
   p3a: !include cnc-bg-p3a.yaml
   p3b: !include cnc-bg-p3b.yaml

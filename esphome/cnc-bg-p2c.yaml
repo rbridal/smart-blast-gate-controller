@@ -1,0 +1,138 @@
+# Commanded moves (desired changes). Each seat_* script PREEMPTS everything
+# else running on THAT gate only: stale seat/correct/write scripts are stopped,
+# motion_busy + retry/grace/cooldown/align-fault are reset, then it drives to
+# the new target. The other gate is never touched, so one gate retrying can't
+# block the other, and a CNC re-open never waits on a stuck close.
+script:
+  - id: seat_both_closed
+    mode: restart
+    then:
+      - lambda: |-
+          uint32_t g = millis() + (uint32_t)(id(align_grace_s).state * 1000.0f);
+          id(seat_cnc_open).stop(); id(seat_cnc_closed).stop();
+          id(correct_cnc_to_open).stop(); id(correct_cnc_to_closed).stop();
+          id(write_cnc_open).stop(); id(write_cnc_closed).stop();
+          id(seat_hose_open).stop(); id(seat_hose_closed).stop();
+          id(correct_hose_to_open).stop(); id(correct_hose_to_closed).stop();
+          id(write_hose_open).stop(); id(write_hose_closed).stop();
+          id(motion_busy_cnc) = false; id(motion_busy_hose) = false;
+          id(retry_count_cnc) = 0; id(retry_count_hose) = 0;
+          id(cooldown_until_cnc) = 0; id(cooldown_until_hose) = 0;
+          id(align_fault_cnc) = false; id(align_fault_hose) = false;
+          id(grace_until_cnc) = g; id(grace_until_hose) = g;
+          id(misaligned_since_cnc) = 0; id(misaligned_since_hose) = 0;
+      - switch.template.publish:
+          id: valve_cnc
+          state: OFF
+      - switch.template.publish:
+          id: valve_hose
+          state: OFF
+      # Sequential (one servo at a time). If a new command for a gate arrives
+      # meanwhile, its seat_* script takes that gate over; skip it here.
+      - script.execute: write_cnc_closed
+      - script.wait: write_cnc_closed
+      - if:
+          condition:
+            lambda: 'return !id(valve_hose).state && !id(seat_hose_open).is_running();'
+          then:
+            - script.execute: write_hose_closed
+            - script.wait: write_hose_closed
+
+  - id: seat_cnc_open
+    mode: restart
+    then:
+      # Preempt any CNC close / retry / correction immediately (no delay).
+      - lambda: |-
+          id(seat_cnc_closed).stop();
+          id(correct_cnc_to_open).stop(); id(correct_cnc_to_closed).stop();
+          id(write_cnc_open).stop(); id(write_cnc_closed).stop();
+          id(motion_busy_cnc) = false;
+          id(retry_count_cnc) = 0; id(cooldown_until_cnc) = 0;
+          id(align_fault_cnc) = false; id(misaligned_since_cnc) = 0;
+          id(grace_until_cnc) = millis() + (uint32_t)(id(align_grace_s).state * 1000.0f);
+      - switch.template.publish:
+          id: valve_cnc
+          state: ON
+      - script.execute: write_cnc_open
+      - script.wait: write_cnc_open
+
+  - id: seat_cnc_closed
+    mode: restart
+    then:
+      - lambda: |-
+          id(seat_cnc_open).stop();
+          id(correct_cnc_to_open).stop(); id(correct_cnc_to_closed).stop();
+          id(write_cnc_open).stop(); id(write_cnc_closed).stop();
+          id(motion_busy_cnc) = false;
+          id(retry_count_cnc) = 0; id(cooldown_until_cnc) = 0;
+          id(align_fault_cnc) = false; id(misaligned_since_cnc) = 0;
+          // Grace covers the vac coast-down delay too when this is the last gate.
+          float d = id(valve_hose).state ? 0.0f : id(last_gate_close_delay_s).state;
+          id(grace_until_cnc) = millis() + (uint32_t)((id(align_grace_s).state + d) * 1000.0f);
+      # Publish desired first so a stale OFF can never land after a re-open.
+      - switch.template.publish:
+          id: valve_cnc
+          state: OFF
+      # Last open gate (hose closed) → wait for vac coast-down
+      - if:
+          condition:
+            switch.is_off: valve_hose
+          then:
+            - delay: !lambda |-
+                return (uint32_t)(id(last_gate_close_delay_s).state * 1000.0f);
+      - script.execute: write_cnc_closed
+      - script.wait: write_cnc_closed
+
+  - id: seat_hose_open
+    mode: restart
+    then:
+      - lambda: |-
+          id(seat_hose_closed).stop();
+          id(correct_hose_to_open).stop(); id(correct_hose_to_closed).stop();
+          id(write_hose_open).stop(); id(write_hose_closed).stop();
+          id(motion_busy_hose) = false;
+          id(retry_count_hose) = 0; id(cooldown_until_hose) = 0;
+          id(align_fault_hose) = false; id(misaligned_since_hose) = 0;
+          id(grace_until_hose) = millis() + (uint32_t)(id(align_grace_s).state * 1000.0f);
+      - switch.template.publish:
+          id: valve_hose
+          state: ON
+      - script.execute: write_hose_open
+      - script.wait: write_hose_open
+
+  - id: seat_hose_closed
+    mode: restart
+    then:
+      - lambda: |-
+          id(seat_hose_open).stop();
+          id(correct_hose_to_open).stop(); id(correct_hose_to_closed).stop();
+          id(write_hose_open).stop(); id(write_hose_closed).stop();
+          id(motion_busy_hose) = false;
+          id(retry_count_hose) = 0; id(cooldown_until_hose) = 0;
+          id(align_fault_hose) = false; id(misaligned_since_hose) = 0;
+          float d = id(valve_cnc).state ? 0.0f : id(last_gate_close_delay_s).state;
+          id(grace_until_hose) = millis() + (uint32_t)((id(align_grace_s).state + d) * 1000.0f);
+      - switch.template.publish:
+          id: valve_hose
+          state: OFF
+      # Last open gate (CNC closed) → wait for vac coast-down
+      - if:
+          condition:
+            switch.is_off: valve_cnc
+          then:
+            - delay: !lambda |-
+                return (uint32_t)(id(last_gate_close_delay_s).state * 1000.0f);
+      - script.execute: write_hose_closed
+      - script.wait: write_hose_closed
+
+  - id: clear_align_faults
+    mode: single
+    then:
+      - lambda: |-
+          id(align_fault_cnc) = false;
+          id(align_fault_hose) = false;
+          id(retry_count_cnc) = 0;
+          id(retry_count_hose) = 0;
+          id(misaligned_since_cnc) = 0;
+          id(misaligned_since_hose) = 0;
+      - logger.log: "Align faults cleared"

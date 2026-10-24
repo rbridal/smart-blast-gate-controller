@@ -37,6 +37,12 @@ detach. Closing the last open gate waits for the vac to coast down. Details:
 | `hardware/lightburn/` | Laser faceplate / label / reed-plate SVGs |
 | `hardware/legacy-blast-gate-c/` | Earlier "Blast Gate C" no-reed config + horn-flag reed mounts (superseded) |
 
+### Which display config is current
+
+The display in daily use is **`esphome/displays/shop-cnc-display.yaml`** (device `shop-cnc-display`, "Shop CNC Display"). It has the CNC override toggle, spindle-following colors, and the amber "gate moving" screen. `smart-blast-gate-display.yaml` (formerly `circle-try-3.yaml`) and `smart-blast-gate-prototype-display.yaml` are older configs kept for reference.
+
+The controller (`esphome/cnc-blast-gate.yaml`) pulls its packages from `cnc-bg-p1`, `p2a`, `p2b`, `p2c`, `p3a` and `p3b`. All keys, passwords and Wi-Fi values come from `!secret` entries in your own `secrets.yaml` (not in this repo), e.g. `smart_blast_gate_api_key`.
+
 ## Bill of materials (as known)
 | Qty | Part | Notes |
 |---|---|---|

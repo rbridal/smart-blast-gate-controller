@@ -105,7 +105,20 @@ binary_sensor:
     device_class: problem
     lambda: "return id(align_fault_hose);"
 
+debug:
+  update_interval: 60s
+
+sensor:
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+
 text_sensor:
+  # Why did it last reboot? (Brownout = servo stall sagging 5V/3V3)
+  - platform: debug
+    reset_reason:
+      name: "Reset reason"
+
   - platform: template
     name: "CNC actual"
     id: actual_cnc
@@ -133,3 +146,4 @@ text_sensor:
       if (c && !o) return {std::string("closed")};
       if (o && !c) return {std::string("open")};
       return {std::string("unknown")};
+

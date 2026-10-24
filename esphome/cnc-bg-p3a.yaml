@@ -250,3 +250,4 @@ button:
     entity_category: config
     on_press:
       - script.execute: clear_align_faults
+

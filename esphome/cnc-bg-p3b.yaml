@@ -19,7 +19,10 @@ interval:
           }
 
           // ---- CNC gate supervisor ----
-          if (id(reed_correction).state && !id(align_fault_cnc) && !id(motion_busy_cnc)) {
+          if (id(reed_correction).state && !id(align_fault_cnc) && !id(motion_busy_cnc) &&
+              !id(seat_cnc_open).is_running() && !id(seat_cnc_closed).is_running() &&
+              !id(seat_both_closed).is_running() &&
+              !id(correct_cnc_to_open).is_running() && !id(correct_cnc_to_closed).is_running()) {
             uint32_t now = millis();
             if ((int32_t)(now - id(grace_until_cnc)) >= 0 &&
                 (int32_t)(now - id(cooldown_until_cnc)) >= 0) {
@@ -70,7 +73,10 @@ interval:
           }
 
           // ---- Hose gate supervisor ----
-          if (id(reed_correction).state && !id(align_fault_hose) && !id(motion_busy_hose)) {
+          if (id(reed_correction).state && !id(align_fault_hose) && !id(motion_busy_hose) &&
+              !id(seat_hose_open).is_running() && !id(seat_hose_closed).is_running() &&
+              !id(seat_both_closed).is_running() &&
+              !id(correct_hose_to_open).is_running() && !id(correct_hose_to_closed).is_running()) {
             uint32_t now = millis();
             if ((int32_t)(now - id(grace_until_hose)) >= 0 &&
                 (int32_t)(now - id(cooldown_until_hose)) >= 0) {
