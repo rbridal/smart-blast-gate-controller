@@ -1,0 +1,691 @@
+# =============================================================================
+# ESPHome — Shop Bambu Display (single-file, no packages)
+# Hardware cloned from Energy Panel (zx2d80ce02s-energy-display.yaml)
+# Board: PanelLan ZX2D80CE02S-V10 / AITRIP 2.8" ESP32-S3 (WT32-S3-WROVER-N8R2)
+# =============================================================================
+# Secrets to add before USB install (wifi house/shop secrets already exist):
+#   shop_bambu_display__encryption_key
+#   shop_bambu_display__ota_password
+# Optional AP: shop_bambu_display__ap_password
+# Cover image entity (HA only; not rendered on-device yet):
+#   image.bl_p1s_a_cover_image
+# =============================================================================
+
+substitutions:
+  name: shop-bambu-display
+  friendly_name: Shop Bambu Display
+  print_status_entity: sensor.bl_p1s_a_print_status
+  print_progress_entity: sensor.bl_p1s_a_print_progress
+  task_name_entity: sensor.bl_p1s_a_task_name
+  stage_entity: sensor.bl_p1s_a_current_stage
+  start_time_entity: sensor.bl_p1s_a_start_time
+  end_time_entity: sensor.bl_p1s_a_end_time
+  remaining_pretty_entity: sensor.bl_p1s_a_pretty_print_remaining
+  nozzle_temp_entity: sensor.bl_p1s_a_nozzle_temperature
+  bed_temp_entity: sensor.bl_p1s_a_bed_temperature
+  layer_entity: sensor.bl_p1s_a_current_layer
+  layer_total_entity: sensor.bl_p1s_a_total_layer_count
+  online_entity: binary_sensor.bl_p1s_a_online
+  ams1_tray1_entity: sensor.bl_p1s_a_ams_1_tray_1
+  ams1_tray2_entity: sensor.bl_p1s_a_ams_1_tray_2
+  ams1_tray3_entity: sensor.bl_p1s_a_ams_1_tray_3
+  ams1_tray4_entity: sensor.bl_p1s_a_ams_1_tray_4
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: "2025.10.0"
+  project:
+    name: "delrobco.shop_bambu_display"
+    version: "1.0.0"
+  on_boot:
+    priority: -100
+    then:
+      - light.turn_on:
+          id: backlight
+          brightness: 80%
+      - delay: 500ms
+      - script.execute: refresh_ui
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+
+psram:
+  mode: quad
+  speed: 80MHz
+
+logger:
+  level: INFO
+  hardware_uart: USB_SERIAL_JTAG
+
+api:
+  encryption:
+    key: !secret shop_bambu_display__encryption_key
+  reboot_timeout: 0s
+
+ota:
+  - platform: esphome
+    password: !secret shop_bambu_display__ota_password
+
+wifi:
+  networks:
+    - id: home
+      ssid: !secret wifi_ssid_house
+      password: !secret wifi_password_house
+    - id: shop
+      ssid: !secret wifi_ssid_shop
+      password: !secret wifi_password_shop
+
+captive_portal:
+
+spi:
+  - id: lcd_octal
+    type: octal
+    clk_pin: GPIO17
+    data_pins:
+      - GPIO16
+      - GPIO40
+      - GPIO15
+      - GPIO7
+      - GPIO41
+      - GPIO42
+      - GPIO2
+      - GPIO1
+
+time:
+  - platform: homeassistant
+    id: ha_time
+
+output:
+  - platform: ledc
+    id: backlight_pwm
+    pin: GPIO47
+    frequency: 20000Hz
+
+light:
+  - platform: monochromatic
+    name: "Shop Bambu Display Backlight"
+    id: backlight
+    output: backlight_pwm
+    restore_mode: ALWAYS_ON
+    default_transition_length: 300ms
+
+button:
+  - platform: restart
+    name: Reboot
+    id: reboot_button
+    icon: mdi:restart
+    entity_category: config
+
+sensor:
+  - platform: wifi_signal
+    name: WiFi Signal
+    update_interval: 60s
+    entity_category: diagnostic
+  - platform: homeassistant
+    id: print_progress
+    entity_id: ${print_progress_entity}
+    internal: true
+  - platform: homeassistant
+    id: nozzle_temp
+    entity_id: ${nozzle_temp_entity}
+    internal: true
+  - platform: homeassistant
+    id: bed_temp
+    entity_id: ${bed_temp_entity}
+    internal: true
+  - platform: homeassistant
+    id: current_layer
+    entity_id: ${layer_entity}
+    internal: true
+  - platform: homeassistant
+    id: total_layers
+    entity_id: ${layer_total_entity}
+    internal: true
+  - platform: homeassistant
+    id: ams1_remain
+    entity_id: ${ams1_tray1_entity}
+    attribute: remain
+    internal: true
+  - platform: homeassistant
+    id: ams2_remain
+    entity_id: ${ams1_tray2_entity}
+    attribute: remain
+    internal: true
+  - platform: homeassistant
+    id: ams3_remain
+    entity_id: ${ams1_tray3_entity}
+    attribute: remain
+    internal: true
+  - platform: homeassistant
+    id: ams4_remain
+    entity_id: ${ams1_tray4_entity}
+    attribute: remain
+    internal: true
+
+binary_sensor:
+  - platform: status
+    name: Status
+    entity_category: diagnostic
+  - platform: homeassistant
+    id: printer_online
+    entity_id: ${online_entity}
+    internal: true
+  - platform: homeassistant
+    id: ams1_empty
+    entity_id: ${ams1_tray1_entity}
+    attribute: empty
+    internal: true
+  - platform: homeassistant
+    id: ams2_empty
+    entity_id: ${ams1_tray2_entity}
+    attribute: empty
+    internal: true
+  - platform: homeassistant
+    id: ams3_empty
+    entity_id: ${ams1_tray3_entity}
+    attribute: empty
+    internal: true
+  - platform: homeassistant
+    id: ams4_empty
+    entity_id: ${ams1_tray4_entity}
+    attribute: empty
+    internal: true
+  - platform: homeassistant
+    id: ams1_active
+    entity_id: ${ams1_tray1_entity}
+    attribute: active
+    internal: true
+  - platform: homeassistant
+    id: ams2_active
+    entity_id: ${ams1_tray2_entity}
+    attribute: active
+    internal: true
+  - platform: homeassistant
+    id: ams3_active
+    entity_id: ${ams1_tray3_entity}
+    attribute: active
+    internal: true
+  - platform: homeassistant
+    id: ams4_active
+    entity_id: ${ams1_tray4_entity}
+    attribute: active
+    internal: true
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: IP Address
+      entity_category: diagnostic
+    ssid:
+      name: Connected SSID
+      entity_category: diagnostic
+  - platform: homeassistant
+    id: print_status
+    entity_id: ${print_status_entity}
+    internal: true
+  - platform: homeassistant
+    id: task_name
+    entity_id: ${task_name_entity}
+    internal: true
+  - platform: homeassistant
+    id: current_stage
+    entity_id: ${stage_entity}
+    internal: true
+  - platform: homeassistant
+    id: start_time
+    entity_id: ${start_time_entity}
+    internal: true
+  - platform: homeassistant
+    id: end_time
+    entity_id: ${end_time_entity}
+    internal: true
+  - platform: homeassistant
+    id: remaining_pretty
+    entity_id: ${remaining_pretty_entity}
+    internal: true
+  - platform: homeassistant
+    id: ams1_color
+    entity_id: ${ams1_tray1_entity}
+    attribute: color
+    internal: true
+  - platform: homeassistant
+    id: ams2_color
+    entity_id: ${ams1_tray2_entity}
+    attribute: color
+    internal: true
+  - platform: homeassistant
+    id: ams3_color
+    entity_id: ${ams1_tray3_entity}
+    attribute: color
+    internal: true
+  - platform: homeassistant
+    id: ams4_color
+    entity_id: ${ams1_tray4_entity}
+    attribute: color
+    internal: true
+
+interval:
+  - interval: 2s
+    then:
+      - script.execute: refresh_ui
+
+color:
+  - id: col_bg_idle
+    hex: "0B0E13"
+  - id: col_card
+    hex: "161B22"
+  - id: col_text
+    hex: "F0F3F6"
+  - id: col_muted
+    hex: "8B949E"
+  - id: col_bambu
+    hex: "00AE42"
+  - id: col_line
+    hex: "30363D"
+  - id: col_empty
+    hex: "30363D"
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_hero
+    size: 56
+    glyphs: "0123456789%READY.- "
+    bpp: 4
+  - file: "gfonts://Roboto"
+    id: font_title
+    size: 16
+    glyphsets: [GF_Latin_Core]
+    bpp: 4
+  - file: "gfonts://Roboto"
+    id: font_body
+    size: 14
+    glyphsets: [GF_Latin_Core]
+    bpp: 4
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 12
+    glyphs: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .:%/-°#"
+    bpp: 4
+  - file: "gfonts://Roboto"
+    id: font_ams
+    size: 11
+    glyphs: "0123456789%g- "
+    bpp: 4
+
+display:
+  - platform: mipi_spi
+    id: main_display
+    model: ST7789V
+    spi_id: lcd_octal
+    bus_mode: octal
+    dc_pin: GPIO18
+    reset_pin:
+      number: GPIO3
+      ignore_strapping_warning: true
+    invert_colors: true
+    color_order: rgb
+    data_rate: 20MHz
+    dimensions:
+      width: 240
+      height: 320
+    rotation: 0
+    update_interval: never
+    auto_clear_enabled: false
+
+script:
+  - id: refresh_ui
+    mode: restart
+    then:
+      - lambda: |-
+          auto status = id(print_status).has_state() ? id(print_status).state : std::string("");
+          bool online = id(printer_online).has_state() && id(printer_online).state;
+          bool active = online && (status == "running" || status == "prepare" ||
+                                   status == "pause" || status == "slicing" || status == "init");
+          lv_obj_set_style_bg_color(id(page_root), lv_color_hex(active ? 0x0A1A12 : 0x0B0E13), LV_PART_MAIN);
+          if (!online) {
+            lv_label_set_text(id(lbl_mode), "OFFLINE");
+            lv_obj_set_style_text_color(id(lbl_mode), lv_color_hex(0xF85149), LV_PART_MAIN);
+            lv_obj_set_style_bg_color(id(mode_badge), lv_color_hex(0x3D1515), LV_PART_MAIN);
+          } else if (status == "pause") {
+            lv_label_set_text(id(lbl_mode), "PAUSED");
+            lv_obj_set_style_text_color(id(lbl_mode), lv_color_hex(0xD29922), LV_PART_MAIN);
+            lv_obj_set_style_bg_color(id(mode_badge), lv_color_hex(0x3D2E10), LV_PART_MAIN);
+          } else if (active) {
+            auto stage = id(current_stage).has_state() ? id(current_stage).state : status;
+            if (stage.empty()) stage = "printing";
+            char badge[24];
+            snprintf(badge, sizeof(badge), "%.12s", stage.c_str());
+            for (char *p = badge; *p; ++p) if (*p >= 'a' && *p <= 'z') *p -= 32;
+            lv_label_set_text(id(lbl_mode), badge);
+            lv_obj_set_style_text_color(id(lbl_mode), lv_color_hex(0x00AE42), LV_PART_MAIN);
+            lv_obj_set_style_bg_color(id(mode_badge), lv_color_hex(0x0F2A18), LV_PART_MAIN);
+          } else if (status == "finish") {
+            lv_label_set_text(id(lbl_mode), "DONE");
+            lv_obj_set_style_text_color(id(lbl_mode), lv_color_hex(0x3FB950), LV_PART_MAIN);
+            lv_obj_set_style_bg_color(id(mode_badge), lv_color_hex(0x0F2A18), LV_PART_MAIN);
+          } else {
+            lv_label_set_text(id(lbl_mode), "READY");
+            lv_obj_set_style_text_color(id(lbl_mode), lv_color_hex(0x8B949E), LV_PART_MAIN);
+            lv_obj_set_style_bg_color(id(mode_badge), lv_color_hex(0x161B22), LV_PART_MAIN);
+          }
+          if (active && id(print_progress).has_state() && !std::isnan(id(print_progress).state)) {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%.0f%%", id(print_progress).state);
+            lv_label_set_text(id(lbl_hero), buf);
+            lv_obj_set_style_text_color(id(lbl_hero), lv_color_hex(0x00AE42), LV_PART_MAIN);
+          } else if (!online) {
+            lv_label_set_text(id(lbl_hero), "--");
+            lv_obj_set_style_text_color(id(lbl_hero), lv_color_hex(0xF85149), LV_PART_MAIN);
+          } else if (status == "finish") {
+            lv_label_set_text(id(lbl_hero), "100%");
+            lv_obj_set_style_text_color(id(lbl_hero), lv_color_hex(0x3FB950), LV_PART_MAIN);
+          } else {
+            lv_label_set_text(id(lbl_hero), "READY");
+            lv_obj_set_style_text_color(id(lbl_hero), lv_color_hex(0x8B949E), LV_PART_MAIN);
+          }
+          std::string task = id(task_name).has_state() ? id(task_name).state : "";
+          if (task.empty()) task = online ? "No active task" : "Printer offline";
+          if (task.size() > 36) task = task.substr(0, 33) + "...";
+          lv_label_set_text(id(lbl_task), task.c_str());
+          lv_obj_set_style_text_color(id(lbl_task), lv_color_hex(active ? 0xF0F3F6 : 0x8B949E), LV_PART_MAIN);
+          char times[64];
+          if (active) {
+            std::string rem = id(remaining_pretty).has_state() ? id(remaining_pretty).state : "--";
+            std::string end = id(end_time).has_state() ? id(end_time).state : "";
+            if (end.size() >= 16) {
+              char hhmm[8];
+              snprintf(hhmm, sizeof(hhmm), "%.5s", end.c_str() + 11);
+              snprintf(times, sizeof(times), "ETA %s (%s)", rem.c_str(), hhmm);
+            } else snprintf(times, sizeof(times), "ETA %s", rem.c_str());
+          } else if (status == "finish") {
+            snprintf(times, sizeof(times), "Print finished");
+          } else {
+            std::string st = id(start_time).has_state() ? id(start_time).state : "";
+            if (st.size() >= 16) snprintf(times, sizeof(times), "Last start %.5s", st.c_str() + 11);
+            else snprintf(times, sizeof(times), "Idle");
+          }
+          lv_label_set_text(id(lbl_times), times);
+          lv_obj_set_style_bg_color(id(accent_bar), lv_color_hex(active ? 0x00AE42 : (online ? 0x30363D : 0xF85149)), LV_PART_MAIN);
+          char buf[48];
+          bool has_n = id(nozzle_temp).has_state() && !std::isnan(id(nozzle_temp).state);
+          bool has_b = id(bed_temp).has_state() && !std::isnan(id(bed_temp).state);
+          bool has_l = id(current_layer).has_state() && !std::isnan(id(current_layer).state);
+          bool has_t = id(total_layers).has_state() && !std::isnan(id(total_layers).state);
+          if (has_n || has_b) snprintf(buf, sizeof(buf), "Nzl %.0f  Bed %.0f", has_n ? id(nozzle_temp).state : 0.0f, has_b ? id(bed_temp).state : 0.0f);
+          else snprintf(buf, sizeof(buf), "Nzl --  Bed --");
+          lv_label_set_text(id(lbl_temps), buf);
+          if (has_l && has_t) snprintf(buf, sizeof(buf), "Layer %.0f / %.0f", id(current_layer).state, id(total_layers).state);
+          else if (has_l) snprintf(buf, sizeof(buf), "Layer %.0f", id(current_layer).state);
+          else snprintf(buf, sizeof(buf), "Layer --");
+          lv_label_set_text(id(lbl_layers), buf);
+          auto parse_color = [](const std::string &s) -> uint32_t {
+            if (s.size() < 7 || s[0] != '#') return 0x30363D;
+            auto hex = [](char c) -> int {
+              if (c >= '0' && c <= '9') return c - '0';
+              if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+              if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+              return 0;
+            };
+            return ((hex(s[1]) << 4 | hex(s[2])) << 16) | ((hex(s[3]) << 4 | hex(s[4])) << 8) | (hex(s[5]) << 4 | hex(s[6]));
+          };
+          auto slot = [&](esphome::binary_sensor::BinarySensor *empty_s, esphome::binary_sensor::BinarySensor *active_s,
+                          esphome::text_sensor::TextSensor *color_s, esphome::sensor::Sensor *remain_s,
+                          lv_obj_t *swatch, lv_obj_t *lbl, lv_obj_t *ring) {
+            bool empty = empty_s->has_state() && empty_s->state;
+            bool act = active_s->has_state() && active_s->state;
+            uint32_t col = (!empty && color_s->has_state()) ? parse_color(color_s->state) : 0x30363D;
+            lv_obj_set_style_bg_color(swatch, lv_color_hex(col), LV_PART_MAIN);
+            lv_obj_set_style_border_width(ring, act ? 2 : 1, LV_PART_MAIN);
+            lv_obj_set_style_border_color(ring, lv_color_hex(act ? 0x00AE42 : 0x30363D), LV_PART_MAIN);
+            char wbuf[16];
+            if (empty || !remain_s->has_state() || std::isnan(remain_s->state)) snprintf(wbuf, sizeof(wbuf), "-");
+            else snprintf(wbuf, sizeof(wbuf), "%dg", (int) lroundf(remain_s->state * 10.0f));  // remain% of 1000g
+            lv_label_set_text(lbl, wbuf);
+          };
+          slot(id(ams1_empty), id(ams1_active), id(ams1_color), id(ams1_remain), id(ams1_swatch), id(ams1_weight_lbl), id(ams1_ring));
+          slot(id(ams2_empty), id(ams2_active), id(ams2_color), id(ams2_remain), id(ams2_swatch), id(ams2_weight_lbl), id(ams2_ring));
+          slot(id(ams3_empty), id(ams3_active), id(ams3_color), id(ams3_remain), id(ams3_swatch), id(ams3_weight_lbl), id(ams3_ring));
+          slot(id(ams4_empty), id(ams4_active), id(ams4_color), id(ams4_remain), id(ams4_swatch), id(ams4_weight_lbl), id(ams4_ring));
+
+lvgl:
+  displays: [main_display]
+  buffer_size: 25%
+  color_depth: 16
+  bg_color: col_bg_idle
+  default_font: font_body
+  log_level: WARN
+  pages:
+    - id: main_page
+      bg_color: col_bg_idle
+      scrollable: false
+      widgets:
+        - obj:
+            id: page_root
+            width: 100%
+            height: 100%
+            bg_color: col_bg_idle
+            bg_opa: COVER
+            border_width: 0
+            pad_all: 8
+            scrollable: false
+            widgets:
+              - obj:
+                  id: mode_badge
+                  align: TOP_MID
+                  y: 4
+                  width: 120
+                  height: 24
+                  radius: 12
+                  bg_color: col_card
+                  bg_opa: COVER
+                  border_width: 0
+                  widgets:
+                    - label:
+                        id: lbl_mode
+                        align: CENTER
+                        text: "..."
+                        text_font: font_small
+                        text_color: col_muted
+              - label:
+                  id: lbl_hero
+                  align: TOP_MID
+                  y: 36
+                  text: "READY"
+                  text_font: font_hero
+                  text_color: col_muted
+              - obj:
+                  id: accent_bar
+                  align: TOP_MID
+                  y: 100
+                  width: 160
+                  height: 3
+                  radius: 2
+                  bg_color: col_line
+                  bg_opa: COVER
+                  border_width: 0
+              - label:
+                  id: lbl_task
+                  align: TOP_MID
+                  y: 112
+                  width: 220
+                  text: "Loading..."
+                  text_font: font_title
+                  text_color: col_muted
+                  text_align: CENTER
+                  long_mode: DOT
+              - label:
+                  id: lbl_times
+                  align: TOP_MID
+                  y: 138
+                  width: 220
+                  text: ""
+                  text_font: font_small
+                  text_color: col_muted
+                  text_align: CENTER
+              - label:
+                  id: lbl_temps
+                  align: TOP_MID
+                  y: 158
+                  width: 220
+                  text: "Nzl --  Bed --"
+                  text_font: font_body
+                  text_color: col_text
+                  text_align: CENTER
+              - label:
+                  id: lbl_layers
+                  align: TOP_MID
+                  y: 180
+                  width: 220
+                  text: "Layer --"
+                  text_font: font_small
+                  text_color: col_muted
+                  text_align: CENTER
+              - obj:
+                  align: TOP_MID
+                  y: 200
+                  width: 72
+                  height: 40
+                  radius: 4
+                  bg_color: col_card
+                  bg_opa: COVER
+                  border_width: 1
+                  border_color: col_line
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: "COVER"
+                        text_font: font_small
+                        text_color: col_muted
+              - obj:
+                  id: ams_strip
+                  align: BOTTOM_MID
+                  y: -4
+                  width: 224
+                  height: 72
+                  bg_color: col_card
+                  bg_opa: COVER
+                  radius: 8
+                  border_width: 0
+                  pad_all: 6
+                  layout:
+                    type: FLEX
+                    flex_flow: ROW
+                    flex_align_main: SPACE_EVENLY
+                    flex_align_cross: CENTER
+                    pad_column: 4
+                  widgets:
+                    - obj:
+                        id: ams1_ring
+                        width: 48
+                        height: 60
+                        bg_opa: TRANSP
+                        border_width: 1
+                        border_color: col_line
+                        radius: 6
+                        pad_all: 2
+                        widgets:
+                          - obj:
+                              id: ams1_swatch
+                              align: TOP_MID
+                              y: 2
+                              width: 36
+                              height: 28
+                              radius: 4
+                              bg_color: col_empty
+                              bg_opa: COVER
+                              border_width: 0
+                          - label:
+                              id: ams1_weight_lbl
+                              align: BOTTOM_MID
+                              y: -2
+                              text: "-"
+                              text_font: font_ams
+                              text_color: col_text
+                    - obj:
+                        id: ams2_ring
+                        width: 48
+                        height: 60
+                        bg_opa: TRANSP
+                        border_width: 1
+                        border_color: col_line
+                        radius: 6
+                        pad_all: 2
+                        widgets:
+                          - obj:
+                              id: ams2_swatch
+                              align: TOP_MID
+                              y: 2
+                              width: 36
+                              height: 28
+                              radius: 4
+                              bg_color: col_empty
+                              bg_opa: COVER
+                              border_width: 0
+                          - label:
+                              id: ams2_weight_lbl
+                              align: BOTTOM_MID
+                              y: -2
+                              text: "-"
+                              text_font: font_ams
+                              text_color: col_text
+                    - obj:
+                        id: ams3_ring
+                        width: 48
+                        height: 60
+                        bg_opa: TRANSP
+                        border_width: 1
+                        border_color: col_line
+                        radius: 6
+                        pad_all: 2
+                        widgets:
+                          - obj:
+                              id: ams3_swatch
+                              align: TOP_MID
+                              y: 2
+                              width: 36
+                              height: 28
+                              radius: 4
+                              bg_color: col_empty
+                              bg_opa: COVER
+                              border_width: 0
+                          - label:
+                              id: ams3_weight_lbl
+                              align: BOTTOM_MID
+                              y: -2
+                              text: "-"
+                              text_font: font_ams
+                              text_color: col_text
+                    - obj:
+                        id: ams4_ring
+                        width: 48
+                        height: 60
+                        bg_opa: TRANSP
+                        border_width: 1
+                        border_color: col_line
+                        radius: 6
+                        pad_all: 2
+                        widgets:
+                          - obj:
+                              id: ams4_swatch
+                              align: TOP_MID
+                              y: 2
+                              width: 36
+                              height: 28
+                              radius: 4
+                              bg_color: col_empty
+                              bg_opa: COVER
+                              border_width: 0
+                          - label:
+                              id: ams4_weight_lbl
+                              align: BOTTOM_MID
+                              y: -2
+                              text: "-"
+                              text_font: font_ams
+                              text_color: col_text

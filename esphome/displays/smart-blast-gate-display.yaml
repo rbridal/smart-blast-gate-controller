@@ -1,41 +1,71 @@
+# =============================================================================
+# ESPHome — Smart Blast Gate Display (M5Stack Tough)
+# Device: smart-blast-gate-display / "Smart Blast Gate Display"
+# Hardware: M5Stack Tough (K034) — ESP32-D0WDQ6-V3, 8MB PSRAM, 16MB flash
+#   ILI9342C 320x240 (ili9xxx M5STACK), CHSC6540 touch @0x2E, AXP192 PMU
+# Logic ported from shop-cnc-display.yaml v1.3.1 (gate states + tap override).
+# UI scaled for 2.0" 320x240 (not a drop-in of the 480x480 LVGL layout).
+# Framework: Arduino (AXP192 external component). DO NOT flash until Rob OK.
+# Secrets (Shop HA secrets.yaml — never commit values):
+#   smart_blast_gate_display__encryption_key
+#   wifi_ssid_house / wifi_password_house / wifi_ssid_shop / wifi_password_shop
+# Bring-up order: AXP192 (M5TOUGH) powers LCD → ili9xxx → CHSC6540 poll → LVGL
+# =============================================================================
+
 substitutions:
   name: "smart-blast-gate-display"
   friendly_name: "Smart Blast Gate Display"
-  # cnc_valve_entity: "input_boolean.tmp_cnc_switch"
-  # hose_valve_entity: "input_boolean.tmp_hose_switch"
-  cnc_valve_entity: "switch.smart_blast_gate_cnc_blast_gate"
-  hose_valve_entity: "switch.smart_blast_gate_hose_blast_gate"
-  cnc_on_button: "button.dust_collection_cnc_on"
-  cnc_off_button: "button.dust_collection_cnc_off"
-  hose_on_button: "button.dust_collection_hose_on"
-  hose_off_button: "button.dust_collection_hose_off"
+  # Reuse the same HA inputs as Shop CNC Display until that device is retired.
+  cnc_state_entity: "binary_sensor.shop_cnc_display_cnc_state"
+  spindle_active_entity: "binary_sensor.shop_cnc_display_spindle_active"
+  blast_gate_entity: "binary_sensor.shop_cnc_display_blast_gate"
+  override_entity: "binary_sensor.shop_cnc_display_override"
+  shop_vac_entity: "binary_sensor.shop_cnc_display_shop_vac"
+  spindle_power_entity: "sensor.shop_cnc_display_spindle_power"
+  spindle_voltage_entity: "sensor.shop_cnc_display_spindle_voltage"
+  spindle_current_entity: "sensor.shop_cnc_display_spindle_current"
+  override_toggle_entity: "button.shop_cnc_display_override_toggle"
+  cnc_gate_actual_entity: "sensor.smart_blast_gate_controller_cnc_actual"
+  hose_gate_actual_entity: "sensor.smart_blast_gate_controller_hose_actual"
+  vac_power_entity: "sensor.shop_cnc_display_vac_power"
+  start_window_s: "15"
+  vac_run_threshold_w: "400"
+  stop_settle_s: "5"
+  stop_stuck_s: "60"
+  moving_settle_s: "2"
 
 esphome:
   name: "${name}"
   friendly_name: "${friendly_name}"
+  min_version: "2026.9.0"
+  project:
+    name: "delrob.smart-blast-gate-display"
+    version: "2.0.3-tough"
   platformio_options:
-    board_build.flash_mode: dio
-    board_build.f_flash: 80000000L
     board_build.f_cpu: 240000000L
 
 esp32:
-  variant: esp32s3
+  board: m5stack-core-esp32
+  variant: esp32
   flash_size: 16MB
   framework:
-    type: esp-idf
+    type: arduino
 
 psram:
-  mode: octal
-  speed: 80MHz
 
 logger:
 
-# In Home Assistant: device settings → enable
-# "Allow the device to perform Home Assistant actions"
-# so the tap can call button.press.
+external_components:
+  - source: github://paulchilton/esphome-axp192
+    components: [axp192]
+
+# Device settings → enable "Allow the device to perform Home Assistant actions"
 api:
   encryption:
-    key: !secret api_encryption_key  # REDACTED
+    key: !secret smart_blast_gate_display__encryption_key
+  on_client_connected:
+    then:
+      - script.execute: refresh_ui
 
 ota:
   - platform: esphome
@@ -53,64 +83,313 @@ wifi:
       password: !secret wifi_password_shop
 
 i2c:
-  id: i2c_bus
-  sda: GPIO15
-  scl: GPIO14
-  scan: true
+  - id: bus_a
+    sda: GPIO21
+    scl: GPIO22
+    scan: true
 
 spi:
-  - id: display_spi
-    type: quad
-    clk_pin: GPIO38
-    data_pins:
-      - GPIO4
-      - GPIO5
-      - GPIO6
-      - GPIO7
+  - id: lcd_spi
+    clk_pin: GPIO18
+    mosi_pin: GPIO23
+    # MISO GPIO38 unused by ili9xxx but present on Tough
+
+# AXP192 must init (LCD PWR LDO2, BL DC3, RST AXP_IO4) before the display.
+# paulchilton M5TOUGH model auto-resets the ESP once after AXP setup.
+sensor:
+  - platform: axp192
+    model: M5TOUGH
+    address: 0x34
+    i2c_id: bus_a
+    id: axp192_id
+    update_interval: 60s
+    brightness: 100%
+
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    entity_category: diagnostic
+    update_interval: 60s
+
+  - platform: homeassistant
+    id: spindle_power
+    entity_id: ${spindle_power_entity}
+    accuracy_decimals: 0
+    on_value:
+      then:
+        - script.execute: refresh_metrics
+  - platform: homeassistant
+    id: spindle_voltage
+    entity_id: ${spindle_voltage_entity}
+    accuracy_decimals: 0
+    on_value:
+      then:
+        - script.execute: refresh_metrics
+  - platform: homeassistant
+    id: spindle_current
+    entity_id: ${spindle_current_entity}
+    accuracy_decimals: 2
+    on_value:
+      then:
+        - script.execute: refresh_metrics
+  - platform: homeassistant
+    id: vac_power
+    entity_id: ${vac_power_entity}
+    accuracy_decimals: 0
 
 display:
-  - platform: mipi_spi
-    id: disp1
-    model: CO5300
-    bus_mode: quad
-    reset_pin: GPIO39
-    cs_pin: GPIO12
+  - platform: ili9xxx
+    id: lcd
+    model: M5STACK
+    cs_pin: GPIO5
+    dc_pin: GPIO15
+    spi_id: lcd_spi
+    # Tough ILI9342C: invert false = white wash; true required for dark theme.
+    # Explicit BGR matches M5STACK MADCTL (log confirmed). 20MHz for cleaner fills.
+    invert_colors: true
+    color_order: BGR
+    data_rate: 20MHz
     dimensions:
-      height: "466"
-      width: "466"
-      offset_height: 0
-      offset_width: 7
+      width: 320
+      height: 240
+    update_interval: never
+    auto_clear_enabled: false
 
-light:
-  - platform: monochromatic
-    id: display_backlight
-    name: "Backlight"
-    output: backlight_brightness
-    default_transition_length:
-      milliseconds: 0
-    initial_state:
-      brightness: 81%
-    restore_mode:
-      ALWAYS_ON
+# CHSC6540 is not native in ESPHome (chsc6x ≠ this chip). Poll I2C 0x2E and
+# fire the same whole-screen override tap used by Shop CNC Display.
+globals:
+  - id: touch_was_down
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: gate_moving
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: spindle_was_on
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: spindle_on_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: stop_active
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: stop_start_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: cnc_closed_flag
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: cnc_closed_since_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: moving_recent
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: moving_end_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: ui_next
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: ui_state
+    type: int
+    restore_value: false
+    initial_value: "-1"
 
-output:
-  - platform: template
-    id: backlight_brightness
-    type: float
-    write_action:
+interval:
+  - interval: 50ms
+    then:
+      - lambda: |-
+          uint8_t reg = 0x00;
+          uint8_t data[7];
+          if (id(bus_a).write_readv(0x2E, &reg, 1, data, 7) == i2c::ERROR_OK) {
+            bool touched = (data[2] != 0);
+            if (touched) {
+              if (!id(touch_was_down)) {
+                id(tap_override).execute();
+              }
+              id(touch_was_down) = true;
+            } else {
+              id(touch_was_down) = false;
+            }
+          }
+  - interval: 1s
+    then:
+      - script.execute: compute_state
+      - if:
+          condition:
+            lambda: 'return id(ui_next) != id(ui_state);'
+          then:
+            - script.execute: refresh_ui
+
+binary_sensor:
+  - platform: status
+    name: "Status"
+    entity_category: diagnostic
+  - platform: homeassistant
+    id: cnc_state
+    entity_id: ${cnc_state_entity}
+    trigger_on_initial_state: true
+    on_state:
+      then:
+        - script.execute: refresh_ui
+  - platform: homeassistant
+    id: spindle_active
+    entity_id: ${spindle_active_entity}
+    trigger_on_initial_state: true
+    on_state:
       then:
         - lambda: |-
-            id(disp1).set_brightness(state * 255);
+            if (x && !id(spindle_was_on)) {
+              id(spindle_on_ms) = millis();
+              if (id(stop_active)) ESP_LOGI("ui", "Spindle on during STOPPING: cancel stop");
+              id(stop_active) = false;
+              ESP_LOGI("ui", "Spindle on: start window begins");
+            } else if (!x && id(spindle_was_on)) {
+              id(stop_active) = true;
+              id(stop_start_ms) = millis();
+              ESP_LOGI("ui", "Spindle off: STOPPING begins");
+            }
+            id(spindle_was_on) = x;
+        - script.execute: refresh_ui
+  - platform: homeassistant
+    id: blast_gate
+    entity_id: ${blast_gate_entity}
+    trigger_on_initial_state: true
+    on_state:
+      then:
+        - script.execute: refresh_ui
+  - platform: homeassistant
+    id: override_state
+    entity_id: ${override_entity}
+    trigger_on_initial_state: true
+    on_state:
+      then:
+        - script.execute: refresh_ui
+  - platform: homeassistant
+    id: shop_vac
+    entity_id: ${shop_vac_entity}
+    trigger_on_initial_state: true
+    on_state:
+      then:
+        - script.execute: refresh_ui
 
-touchscreen:
-  - platform: cst9220
-    display: disp1
-    id: ts_disp1
-    interrupt_pin: GPIO11
-    reset_pin: GPIO40
-    transform:
-      mirror_x: true
-      mirror_y: true
+text_sensor:
+  - platform: homeassistant
+    id: cnc_gate_actual
+    entity_id: ${cnc_gate_actual_entity}
+    on_value:
+      then:
+        - script.execute: update_gate_moving
+  - platform: homeassistant
+    id: hose_gate_actual
+    entity_id: ${hose_gate_actual_entity}
+    on_value:
+      then:
+        - script.execute: update_gate_moving
+  - platform: template
+    name: "Display State"
+    id: ui_status_text
+    icon: mdi:list-status
+    update_interval: never
+
+number:
+  - platform: template
+    name: "Start Window"
+    id: start_window
+    icon: mdi:timer-sand
+    entity_category: config
+    unit_of_measurement: s
+    min_value: 3
+    max_value: 60
+    step: 1
+    mode: box
+    optimistic: true
+    restore_value: true
+    initial_value: ${start_window_s}
+    on_value:
+      then:
+        - script.execute: refresh_ui
+  - platform: template
+    name: "Vac Run Threshold"
+    id: vac_threshold
+    icon: mdi:flash-triangle-outline
+    entity_category: config
+    unit_of_measurement: W
+    min_value: 20
+    max_value: 1500
+    step: 10
+    mode: box
+    optimistic: true
+    restore_value: true
+    initial_value: ${vac_run_threshold_w}
+    on_value:
+      then:
+        - script.execute: refresh_ui
+  - platform: template
+    name: "Stop Settle"
+    id: stop_settle
+    icon: mdi:timer-check-outline
+    entity_category: config
+    unit_of_measurement: s
+    min_value: 1
+    max_value: 30
+    step: 1
+    mode: box
+    optimistic: true
+    restore_value: true
+    initial_value: ${stop_settle_s}
+    on_value:
+      then:
+        - script.execute: refresh_ui
+  - platform: template
+    name: "Stop Stuck Timeout"
+    id: stop_stuck
+    icon: mdi:timer-alert-outline
+    entity_category: config
+    unit_of_measurement: s
+    min_value: 15
+    max_value: 600
+    step: 5
+    mode: box
+    optimistic: true
+    restore_value: true
+    initial_value: ${stop_stuck_s}
+    on_value:
+      then:
+        - script.execute: refresh_ui
+  - platform: template
+    name: "Moving Settle"
+    id: moving_settle
+    icon: mdi:timer-sand-paused
+    entity_category: config
+    unit_of_measurement: s
+    min_value: 0
+    max_value: 15
+    step: 1
+    mode: box
+    optimistic: true
+    restore_value: true
+    initial_value: ${moving_settle_s}
+    on_value:
+      then:
+        - script.execute: refresh_ui
+
+button:
+  - platform: restart
+    name: "Restart"
+    entity_category: diagnostic
+    icon: mdi:restart
 
 font:
   - file:
@@ -118,295 +397,376 @@ font:
       family: "Roboto"
       weight: black
     id: font_hero
-    size: 96
+    size: 60
+    bpp: 4
+  - file:
+      type: gfonts
+      family: "Roboto"
+      weight: black
+    id: font_hero_sm
+    size: 48
+    bpp: 4
+    glyphs: "CHEKGAT "
+  - file:
+      type: gfonts
+      family: "Roboto"
+      weight: black
+    id: font_watts
+    size: 48
+    bpp: 4
+  - file:
+      type: gfonts
+      family: "Roboto"
+      weight: bold
+    id: font_metric
+    size: 33
+    bpp: 4
+  - file:
+      type: gfonts
+      family: "Roboto"
+      weight: bold
+    id: font_chip
+    size: 28
     bpp: 4
 
 color:
-  - id: fgcolor_on
+  - id: fg_on
     hex: "FFFFFF"
-  - id: fgcolor_off
-    hex: "505050"
-  - id: bgcolor_off
+  - id: fg_off
+    hex: "E8E8E8"
+  - id: fg_dim
+    hex: "B0B0B0"
+  - id: bg_off
     hex: "000000"
-  # Bambu Green (#00AE42); Festool RAL 6018 is in the same family
-  - id: bgcolor_cnc_on
-    hex: "00AE42"
-  - id: bgcolor_hose_on
-    hex: "6495ED"
 
 script:
-  - id: update_split_line
+  - id: update_gate_moving
     then:
+      - lambda: |-
+          const uint32_t now = millis();
+          bool m = (id(cnc_gate_actual).state == "moving") ||
+                   (id(hose_gate_actual).state == "moving");
+          if (m != id(gate_moving)) {
+            id(gate_moving) = m;
+            if (!m) {
+              id(moving_recent) = true;
+              id(moving_end_ms) = now;
+            }
+            ESP_LOGI("gate", "Gate moving: %s", m ? "YES" : "no");
+          }
+          const bool closed = id(cnc_gate_actual).state == "closed";
+          if (closed && !id(cnc_closed_flag)) {
+            id(cnc_closed_flag) = true;
+            id(cnc_closed_since_ms) = now;
+          } else if (!closed) {
+            id(cnc_closed_flag) = false;
+          }
+      - script.execute: refresh_ui
+
+  # States: 0 OFF, 1 IDLE, 2 RUNNING, 3 OVERRIDE (NO DUST, dark green),
+  #         4 MOVING, 5 STARTING, 6 NO DUST (red), 7 STOPPING, 8 CHECK GATE
+  - id: compute_state
+    then:
+      - lambda: |-
+          const uint32_t now = millis();
+          const bool spin = id(spindle_active).state;
+          const bool ovr = id(override_state).state;
+          const bool cnc_on = id(cnc_state).state;
+          const bool gate_open = id(cnc_gate_actual).state == "open";
+          float thr = id(vac_threshold).state;
+          if (std::isnan(thr)) thr = ${vac_run_threshold_w};
+          float win_s = id(start_window).state;
+          if (std::isnan(win_s)) win_s = ${start_window_s};
+          const float pw = id(vac_power).state;
+          const bool vac_ok = std::isnan(pw) ? id(shop_vac).state : (pw >= thr);
+          const bool in_window =
+              spin && (millis() - id(spindle_on_ms)) < (uint32_t) (win_s * 1000.0f);
+          float settle_s = id(stop_settle).state;
+          if (std::isnan(settle_s)) settle_s = ${stop_settle_s};
+          float stuck_s = id(stop_stuck).state;
+          if (std::isnan(stuck_s)) stuck_s = ${stop_stuck_s};
+          float mset_s = id(moving_settle).state;
+          if (std::isnan(mset_s)) mset_s = ${moving_settle_s};
+          const bool hose_moving = id(hose_gate_actual).state == "moving";
+          if (id(stop_active) && !spin && id(cnc_closed_flag) && !hose_moving &&
+              (now - id(cnc_closed_since_ms)) >= (uint32_t) (settle_s * 1000.0f)) {
+            id(stop_active) = false;
+            ESP_LOGI("ui", "STOPPING done after %.1f s",
+                     (now - id(stop_start_ms)) / 1000.0f);
+          }
+          if (id(moving_recent) && !id(gate_moving) &&
+              (now - id(moving_end_ms)) >= (uint32_t) (mset_s * 1000.0f)) {
+            id(moving_recent) = false;
+          }
+          const bool moving_shown = id(gate_moving) || id(moving_recent);
+          int s;
+          if (spin && !ovr && !(gate_open && vac_ok)) {
+            s = in_window ? 5 : 6;
+          } else if (spin && ovr) {
+            s = 3;
+          } else if (spin) {
+            s = 2;
+          } else if (id(stop_active)) {
+            s = ((now - id(stop_start_ms)) >= (uint32_t) (stuck_s * 1000.0f)) ? 8 : 7;
+          } else if (moving_shown) {
+            s = 4;
+          } else if (cnc_on) {
+            s = 1;
+          } else {
+            s = 0;
+          }
+          id(ui_next) = s;
+
+  - id: refresh_metrics
+    then:
+      - lvgl.label.update:
+          id: power_label
+          text:
+            format: "%.0f W"
+            args: [id(spindle_power).state]
+            if_nan: "-- W"
+      - lvgl.label.update:
+          id: volt_label
+          text:
+            format: "%.0f V"
+            args: [id(spindle_voltage).state]
+            if_nan: "-- V"
+      - lvgl.label.update:
+          id: amp_label
+          text:
+            format: "%.2f A"
+            args: [id(spindle_current).state]
+            if_nan: "-- A"
+
+  - id: refresh_ui
+    then:
+      - script.execute: compute_state
+      - lambda: |-
+          if (id(ui_next) != id(ui_state)) {
+            static const char *const names[] = {"OFF", "IDLE", "RUNNING", "OVERRIDE",
+                                                "MOVING", "STARTING", "NO DUST",
+                                                "STOPPING", "CHECK GATE"};
+            ESP_LOGI("ui", "State -> %s", names[id(ui_next)]);
+            id(ui_status_text).publish_state(names[id(ui_next)]);
+          }
+          id(ui_state) = id(ui_next);
       - if:
           condition:
-            or:
-              - binary_sensor.is_on: cnc_valve
-              - binary_sensor.is_on: hose_valve
+            lambda: 'return id(ui_state) == 8;'
           then:
-            - lvgl.widget.update:
-                id: split_line
-                bg_color: fgcolor_on
+            - lvgl.label.update:
+                id: hero_label
+                text_font: font_hero_sm
           else:
-            - lvgl.widget.update:
-                id: split_line
-                bg_color: fgcolor_off
+            - lvgl.label.update:
+                id: hero_label
+                text_font: font_hero
+      - lvgl.widget.update:
+          id: page_root
+          bg_opa: COVER
+          bg_color: !lambda |-
+            // Vivid state fills so MOVING/etc read on Tough ILI9342C (CNC parity + punch).
+            static const uint32_t c[] = {0x000000, 0x0A3A1A, 0xD32F2F, 0x006828,
+                                         0xFF9100, 0xFFE000, 0xE53935,
+                                         0xFF9100, 0xE53935};
+            return lv_color_hex(c[id(ui_state)]);
+      - lvgl.label.update:
+          id: hero_label
+          text: !lambda |-
+            static const char *const t[] = {"OFF", "IDLE", "RUNNING", "NO DUST",
+                                            "MOVING", "STARTING", "NO DUST",
+                                            "STOPPING", "CHECK GATE"};
+            return std::string(t[id(ui_state)]);
+          text_color: !lambda |-
+            // OFF uses bright gray — CNC 0x6E6E6E disappears on Tough's raised black.
+            static const uint32_t c[] = {0xE8E8E8, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF,
+                                         0x000000, 0x000000, 0xFFFFFF,
+                                         0x000000, 0xFFFFFF};
+            return lv_color_hex(c[id(ui_state)]);
+      - lvgl.label.update:
+          id: power_label
+          text_color: !lambda |-
+            static const uint32_t c[] = {0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF,
+                                         0x000000, 0x000000, 0xFFFFFF,
+                                         0x000000, 0xFFFFFF};
+            return lv_color_hex(c[id(ui_state)]);
+      - lvgl.label.update:
+          id: volt_label
+          text_color: !lambda |-
+            static const uint32_t c[] = {0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF,
+                                         0x000000, 0x000000, 0xFFFFFF,
+                                         0x000000, 0xFFFFFF};
+            return lv_color_hex(c[id(ui_state)]);
+      - lvgl.label.update:
+          id: amp_label
+          text_color: !lambda |-
+            static const uint32_t c[] = {0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF,
+                                         0x000000, 0x000000, 0xFFFFFF,
+                                         0x000000, 0xFFFFFF};
+            return lv_color_hex(c[id(ui_state)]);
+      - lvgl.label.update:
+          id: gate_label
+          text_color: !lambda |-
+            static const uint32_t on[] = {0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF,
+                                          0x000000, 0x000000, 0xFFFFFF,
+                                          0x000000, 0xFFFFFF};
+            static const uint32_t off[] = {0xB0B0B0, 0xA5D6A7, 0xEF9A9A, 0x81C784,
+                                           0xFFCC80, 0xFFE082, 0xEF9A9A,
+                                           0xFFCC80, 0xEF9A9A};
+            return lv_color_hex(id(blast_gate).state ? on[id(ui_state)] : off[id(ui_state)]);
+      - lvgl.label.update:
+          id: vac_label
+          text_color: !lambda |-
+            static const uint32_t on[] = {0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF,
+                                          0x000000, 0x000000, 0xFFFFFF,
+                                          0x000000, 0xFFFFFF};
+            static const uint32_t off[] = {0xB0B0B0, 0xA5D6A7, 0xEF9A9A, 0x81C784,
+                                           0xFFCC80, 0xFFE082, 0xEF9A9A,
+                                           0xFFCC80, 0xEF9A9A};
+            return lv_color_hex(id(shop_vac).state ? on[id(ui_state)] : off[id(ui_state)]);
+      - lvgl.label.update:
+          id: ovr_label
+          text: "OVR"
+          text_color: !lambda |-
+            static const uint32_t on[] = {0xF5A623, 0xF5A623, 0xFFD54F, 0xF5A623,
+                                          0x600000, 0x8B0000, 0xFFD54F,
+                                          0x600000, 0xFFD54F};
+            static const uint32_t off[] = {0xB0B0B0, 0xA5D6A7, 0xEF9A9A, 0x81C784,
+                                           0xFFCC80, 0xFFE082, 0xEF9A9A,
+                                           0xFFCC80, 0xEF9A9A};
+            return lv_color_hex(id(override_state).state ? on[id(ui_state)] : off[id(ui_state)]);
+      - script.execute: refresh_metrics
 
-  # mode: single + trailing delay = ignore double-taps while gate is moving
-  - id: cnc_tap
+  - id: tap_override
     mode: single
     then:
-      - if:
-          condition:
-            binary_sensor.is_on: cnc_valve
-          then:
-            # Closing — optimistic UI, then absolute OFF
-            - lvgl.widget.update:
-                id: cnc_panel
-                bg_color: bgcolor_off
-            - lvgl.widget.update:
-                id: cnc_label
-                text_color: fgcolor_off
-            - if:
-                condition:
-                  binary_sensor.is_on: hose_valve
-                then:
-                  - lvgl.widget.update:
-                      id: split_line
-                      bg_color: fgcolor_on
-                else:
-                  - lvgl.widget.update:
-                      id: split_line
-                      bg_color: fgcolor_off
-            - logger.log: "CNC tap — close (debounced)"
-            - homeassistant.action:
-                action: button.press
-                data:
-                  entity_id: ${cnc_off_button}
-          else:
-            # Opening — optimistic UI, then absolute ON
-            - lvgl.widget.update:
-                id: cnc_panel
-                bg_color: bgcolor_cnc_on
-            - lvgl.widget.update:
-                id: cnc_label
-                text_color: fgcolor_on
-            - lvgl.widget.update:
-                id: split_line
-                bg_color: fgcolor_on
-            - logger.log: "CNC tap — open (debounced)"
-            - homeassistant.action:
-                action: button.press
-                data:
-                  entity_id: ${cnc_on_button}
-      - delay: 2s
-
-  - id: hose_tap
-    mode: single
-    then:
-      - if:
-          condition:
-            binary_sensor.is_on: hose_valve
-          then:
-            - lvgl.widget.update:
-                id: hose_panel
-                bg_color: bgcolor_off
-            - lvgl.widget.update:
-                id: hose_label
-                text_color: fgcolor_off
-            - if:
-                condition:
-                  binary_sensor.is_on: cnc_valve
-                then:
-                  - lvgl.widget.update:
-                      id: split_line
-                      bg_color: fgcolor_on
-                else:
-                  - lvgl.widget.update:
-                      id: split_line
-                      bg_color: fgcolor_off
-            - logger.log: "Hose tap — close (debounced)"
-            - homeassistant.action:
-                action: button.press
-                data:
-                  entity_id: ${hose_off_button}
-          else:
-            - lvgl.widget.update:
-                id: hose_panel
-                bg_color: bgcolor_hose_on
-            - lvgl.widget.update:
-                id: hose_label
-                text_color: fgcolor_on
-            - lvgl.widget.update:
-                id: split_line
-                bg_color: fgcolor_on
-            - logger.log: "Hose tap — open (debounced)"
-            - homeassistant.action:
-                action: button.press
-                data:
-                  entity_id: ${hose_on_button}
-      - delay: 2s
-
-binary_sensor:
-  - platform: homeassistant
-    id: cnc_valve
-    entity_id: ${cnc_valve_entity}
-    publish_initial_state: true
-    on_state:
-      then:
-        - if:
-            condition:
-              binary_sensor.is_on: cnc_valve
-            then:
-              - lvgl.widget.update:
-                  id: cnc_panel
-                  bg_color: bgcolor_cnc_on
-              - lvgl.widget.update:
-                  id: cnc_label
-                  text_color: fgcolor_on
-            else:
-              - lvgl.widget.update:
-                  id: cnc_panel
-                  bg_color: bgcolor_off
-              - lvgl.widget.update:
-                  id: cnc_label
-                  text_color: fgcolor_off
-        - script.execute: update_split_line
-  - platform: homeassistant
-    id: hose_valve
-    entity_id: ${hose_valve_entity}
-    publish_initial_state: true
-    on_state:
-      then:
-        - if:
-            condition:
-              binary_sensor.is_on: hose_valve
-            then:
-              - lvgl.widget.update:
-                  id: hose_panel
-                  bg_color: bgcolor_hose_on
-              - lvgl.widget.update:
-                  id: hose_label
-                  text_color: fgcolor_on
-            else:
-              - lvgl.widget.update:
-                  id: hose_panel
-                  bg_color: bgcolor_off
-              - lvgl.widget.update:
-                  id: hose_label
-                  text_color: fgcolor_off
-        - script.execute: update_split_line
+      - logger.log: "Override tap"
+      # Optimistic press feedback (no LVGL touchscreen pressed style on Tough)
+      - lvgl.label.update:
+          id: ovr_label
+          text: "OVR"
+          text_color: 0xFFD54F
+      - lvgl.widget.update:
+          id: page_root
+          bg_color: 0x2A2A2A
+      - homeassistant.action:
+          action: button.press
+          data:
+            entity_id: ${override_toggle_entity}
+      - delay: 250ms
+      - script.execute: refresh_ui
+      - delay: 750ms
+      - script.execute: refresh_ui
 
 lvgl:
   id: lvgl1
   displays:
-    - disp1
-  touchscreens:
-    - ts_disp1
-  rotation: 90
-  full_refresh: true
-  buffer_size: 100%
+    - lcd
   color_depth: 16
-  bg_color: bgcolor_off
-  default_font: font_hero
+  # Full FB (320x240x2 ≈ 150KB in PSRAM) — 25% partial buffer left page bg unpainted
+  # on ili9xxx (washed blue-gray panel default; MOVING color change invisible).
+  buffer_size: 100%
+  bg_color: bg_off
+  default_font: font_chip
   log_level: WARN
-  style_definitions:
-    - id: panel_style
-      border_width: 0
-      outline_width: 0
-      pad_all: 0
-      radius: 0
-      bg_opa: COVER
-    - id: label_style
-      border_width: 0
-      outline_width: 0
-      pad_all: 0
-      radius: 0
-      bg_opa: TRANSP
-      text_color: fgcolor_off
-      text_align: CENTER
   pages:
-    - id: gates_page
-      bg_color: bgcolor_off
+    - id: page_root
+      bg_color: bg_off
+      bg_opa: COVER
       scrollable: false
-      scrollbar_mode: "OFF"
-      scroll_chain: false
+      pad_all: 6
       layout:
         type: FLEX
         flex_flow: COLUMN
-        pad_row: 0
+        flex_align_main: SPACE_BETWEEN
+        flex_align_cross: CENTER
+        pad_row: 2
       widgets:
-        # Top half: CNC. Text reads left-to-right after LVGL 90° rotation.
-        - obj:
-            id: cnc_panel
-            styles: panel_style
+        - label:
+            id: hero_label
             width: 100%
-            flex_grow: 1
-            bg_color: bgcolor_off
-            clickable: true
-            scrollable: false
-            scrollbar_mode: "OFF"
-            scroll_chain: false
-            on_short_click:
-              then:
-                - script.execute: cnc_tap
-            widgets:
-              - label:
-                  id: cnc_label
-                  styles: label_style
-                  align: CENTER
-                  text: "CNC"
-                  text_font: font_hero
-                  text_color: fgcolor_off
-                  text_align: CENTER
-                  clickable: true
-                  scrollable: false
-                  scrollbar_mode: "OFF"
-                  scroll_chain: false
-                  on_short_click:
-                    then:
-                      - script.execute: cnc_tap
-        # Divider: fgcolor_on if either valve is open, fgcolor_off if both are closed
-        - obj:
-            id: split_line
-            width: 100%
-            height: 4
-            pad_all: 0
-            radius: 0
-            border_width: 0
-            outline_width: 0
-            bg_color: fgcolor_off
-            bg_opa: COVER
+            text: "OFF"
+            text_font: font_hero
+            text_color: fg_off
+            text_align: CENTER
             clickable: false
-            scrollable: false
-            scrollbar_mode: "OFF"
-            scroll_chain: false
-        # Bottom half: Hose. Text reads left-to-right.
         - obj:
-            id: hose_panel
-            styles: panel_style
             width: 100%
-            flex_grow: 1
-            bg_color: bgcolor_off
-            clickable: true
-            scrollable: false
-            scrollbar_mode: "OFF"
-            scroll_chain: false
-            on_short_click:
-              then:
-                - script.execute: hose_tap
+            height: SIZE_CONTENT
+            pad_all: 0
+            bg_opa: TRANSP
+            border_width: 0
+            clickable: false
+            layout:
+              type: FLEX
+              flex_flow: COLUMN
+              flex_align_main: CENTER
+              flex_align_cross: CENTER
+              pad_row: 0
             widgets:
               - label:
-                  id: hose_label
-                  styles: label_style
-                  align: CENTER
-                  text: "HOSE"
-                  text_font: font_hero
-                  text_color: fgcolor_off
+                  id: power_label
+                  width: 100%
+                  text: "-- W"
+                  text_font: font_watts
+                  text_color: fg_on
                   text_align: CENTER
-                  clickable: true
-                  scrollable: false
-                  scrollbar_mode: "OFF"
-                  scroll_chain: false
-                  on_short_click:
-                    then:
-                      - script.execute: hose_tap
+                  clickable: false
+              - obj:
+                  width: 100%
+                  height: SIZE_CONTENT
+                  pad_all: 0
+                  pad_left: 4
+                  pad_right: 4
+                  bg_opa: TRANSP
+                  border_width: 0
+                  clickable: false
+                  layout:
+                    type: FLEX
+                    flex_flow: ROW
+                    flex_align_main: SPACE_BETWEEN
+                    flex_align_cross: CENTER
+                  widgets:
+                    - label:
+                        id: volt_label
+                        text: "-- V"
+                        text_font: font_metric
+                        text_color: fg_on
+                        clickable: false
+                    - label:
+                        id: amp_label
+                        text: "-- A"
+                        text_font: font_metric
+                        text_color: fg_on
+                        clickable: false
+        - obj:
+            width: 100%
+            height: SIZE_CONTENT
+            pad_all: 0
+            bg_opa: TRANSP
+            border_width: 0
+            clickable: false
+            layout:
+              type: FLEX
+              flex_flow: ROW
+              flex_align_main: SPACE_EVENLY
+              flex_align_cross: CENTER
+            widgets:
+              - label:
+                  id: gate_label
+                  text: "GATE"
+                  text_font: font_chip
+                  text_color: fg_dim
+                  clickable: false
+              - label:
+                  id: vac_label
+                  text: "VAC"
+                  text_font: font_chip
+                  text_color: fg_dim
+                  clickable: false
+              - label:
+                  id: ovr_label
+                  text: "OVR"
+                  text_font: font_chip
+                  text_color: fg_dim
+                  clickable: false
