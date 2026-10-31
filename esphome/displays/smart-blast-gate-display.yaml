@@ -147,6 +147,7 @@ display:
     cs_pin: GPIO5
     dc_pin: GPIO15
     spi_id: lcd_spi
+    invert_colors: false
     dimensions:
       width: 320
       height: 240
