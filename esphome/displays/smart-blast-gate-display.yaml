@@ -40,7 +40,7 @@ esphome:
   min_version: "2026.9.0"
   project:
     name: "delrob.smart-blast-gate-display"
-    version: "2.0.0-tough"
+    version: "2.0.1-tough"
   platformio_options:
     board_build.f_cpu: 240000000L
 
@@ -104,10 +104,6 @@ sensor:
     id: axp192_id
     update_interval: 60s
     brightness: 80%
-    battery_level:
-      name: "Battery Level"
-      id: tough_battery
-      entity_category: diagnostic
 
   - platform: wifi_signal
     name: "WiFi Signal"
@@ -147,7 +143,8 @@ display:
     cs_pin: GPIO5
     dc_pin: GPIO15
     spi_id: lcd_spi
-    invert_colors: false
+    # Tough ILI9342C: invert false showed CNC's black theme as white/gray.
+    invert_colors: true
     dimensions:
       width: 320
       height: 240
@@ -638,11 +635,21 @@ script:
     mode: single
     then:
       - logger.log: "Override tap"
+      # Optimistic press feedback (no LVGL touchscreen pressed style on Tough)
+      - lvgl.label.update:
+          id: ovr_label
+          text: "OVR"
+          text_color: 0xFFD54F
+      - lvgl.widget.update:
+          id: page_root
+          bg_color: 0x2A2A2A
       - homeassistant.action:
           action: button.press
           data:
             entity_id: ${override_toggle_entity}
-      - delay: 1s
+      - delay: 250ms
+      - script.execute: refresh_ui
+      - delay: 750ms
       - script.execute: refresh_ui
 
 lvgl:
