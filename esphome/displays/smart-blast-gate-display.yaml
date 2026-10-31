@@ -40,7 +40,7 @@ esphome:
   min_version: "2026.9.0"
   project:
     name: "delrob.smart-blast-gate-display"
-    version: "2.0.2-tough"
+    version: "2.0.3-tough"
   platformio_options:
     board_build.f_cpu: 240000000L
 
@@ -566,7 +566,7 @@ script:
           bg_opa: COVER
           bg_color: !lambda |-
             // Vivid state fills so MOVING/etc read on Tough ILI9342C (CNC parity + punch).
-            static const uint32_t c[] = {0x000000, 0x0A3A1A, 0x00AE42, 0x006828,
+            static const uint32_t c[] = {0x000000, 0x0A3A1A, 0xD32F2F, 0x006828,
                                          0xFF9100, 0xFFE000, 0xE53935,
                                          0xFF9100, 0xE53935};
             return lv_color_hex(c[id(ui_state)]);
@@ -579,48 +579,48 @@ script:
             return std::string(t[id(ui_state)]);
           text_color: !lambda |-
             // OFF uses bright gray — CNC 0x6E6E6E disappears on Tough's raised black.
-            static const uint32_t c[] = {0xE8E8E8, 0xFFFFFF, 0x000000, 0xFFFFFF,
+            static const uint32_t c[] = {0xE8E8E8, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF,
                                          0x000000, 0x000000, 0xFFFFFF,
                                          0x000000, 0xFFFFFF};
             return lv_color_hex(c[id(ui_state)]);
       - lvgl.label.update:
           id: power_label
           text_color: !lambda |-
-            static const uint32_t c[] = {0xFFFFFF, 0xFFFFFF, 0x000000, 0xFFFFFF,
+            static const uint32_t c[] = {0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF,
                                          0x000000, 0x000000, 0xFFFFFF,
                                          0x000000, 0xFFFFFF};
             return lv_color_hex(c[id(ui_state)]);
       - lvgl.label.update:
           id: volt_label
           text_color: !lambda |-
-            static const uint32_t c[] = {0xFFFFFF, 0xFFFFFF, 0x000000, 0xFFFFFF,
+            static const uint32_t c[] = {0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF,
                                          0x000000, 0x000000, 0xFFFFFF,
                                          0x000000, 0xFFFFFF};
             return lv_color_hex(c[id(ui_state)]);
       - lvgl.label.update:
           id: amp_label
           text_color: !lambda |-
-            static const uint32_t c[] = {0xFFFFFF, 0xFFFFFF, 0x000000, 0xFFFFFF,
+            static const uint32_t c[] = {0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF,
                                          0x000000, 0x000000, 0xFFFFFF,
                                          0x000000, 0xFFFFFF};
             return lv_color_hex(c[id(ui_state)]);
       - lvgl.label.update:
           id: gate_label
           text_color: !lambda |-
-            static const uint32_t on[] = {0xFFFFFF, 0xFFFFFF, 0x000000, 0xFFFFFF,
+            static const uint32_t on[] = {0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF,
                                           0x000000, 0x000000, 0xFFFFFF,
                                           0x000000, 0xFFFFFF};
-            static const uint32_t off[] = {0xB0B0B0, 0xA5D6A7, 0x1B5E20, 0x81C784,
+            static const uint32_t off[] = {0xB0B0B0, 0xA5D6A7, 0xEF9A9A, 0x81C784,
                                            0xFFCC80, 0xFFE082, 0xEF9A9A,
                                            0xFFCC80, 0xEF9A9A};
             return lv_color_hex(id(blast_gate).state ? on[id(ui_state)] : off[id(ui_state)]);
       - lvgl.label.update:
           id: vac_label
           text_color: !lambda |-
-            static const uint32_t on[] = {0xFFFFFF, 0xFFFFFF, 0x000000, 0xFFFFFF,
+            static const uint32_t on[] = {0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF,
                                           0x000000, 0x000000, 0xFFFFFF,
                                           0x000000, 0xFFFFFF};
-            static const uint32_t off[] = {0xB0B0B0, 0xA5D6A7, 0x1B5E20, 0x81C784,
+            static const uint32_t off[] = {0xB0B0B0, 0xA5D6A7, 0xEF9A9A, 0x81C784,
                                            0xFFCC80, 0xFFE082, 0xEF9A9A,
                                            0xFFCC80, 0xEF9A9A};
             return lv_color_hex(id(shop_vac).state ? on[id(ui_state)] : off[id(ui_state)]);
@@ -628,10 +628,10 @@ script:
           id: ovr_label
           text: "OVR"
           text_color: !lambda |-
-            static const uint32_t on[] = {0xF5A623, 0xF5A623, 0x7A0000, 0xF5A623,
+            static const uint32_t on[] = {0xF5A623, 0xF5A623, 0xFFD54F, 0xF5A623,
                                           0x600000, 0x8B0000, 0xFFD54F,
                                           0x600000, 0xFFD54F};
-            static const uint32_t off[] = {0xB0B0B0, 0xA5D6A7, 0x1B5E20, 0x81C784,
+            static const uint32_t off[] = {0xB0B0B0, 0xA5D6A7, 0xEF9A9A, 0x81C784,
                                            0xFFCC80, 0xFFE082, 0xEF9A9A,
                                            0xFFCC80, 0xEF9A9A};
             return lv_color_hex(id(override_state).state ? on[id(ui_state)] : off[id(ui_state)]);
