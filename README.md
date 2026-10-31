@@ -39,7 +39,10 @@ detach. Closing the last open gate waits for the vac to coast down. Details:
 
 ### Which display config is current
 
-The display in daily use is **`esphome/displays/shop-cnc-display.yaml`** (device `shop-cnc-display`, "Shop CNC Display"). It has the CNC override toggle, spindle-following colors, and the amber "gate moving" screen. `smart-blast-gate-display.yaml` (formerly `circle-try-3.yaml`) and `smart-blast-gate-prototype-display.yaml` are older configs kept for reference.
+- **Daily driver (still):** `esphome/displays/shop-cnc-display.yaml` (device `shop-cnc-display`, "Shop CNC Display") — Guition 4848S040 480×480. Retire only after the Tough is online.
+- **Next (M5Stack Tough, not flashed yet):** `esphome/displays/smart-blast-gate-display.yaml` (device `smart-blast-gate-display`, "Smart Blast Gate Display") — ILI9342C 320×240 + AXP192 + CHSC6540 poll; CNC Display logic scaled for 2".
+- **Archived 2026-10-31:** `esphome/displays/archive/` — old round CO5300 Smart Blast Gate Display + Shop Bambu Display (copied from Shop HA).
+- Prototype: `smart-blast-gate-prototype-display.yaml` kept for reference.
 
 The controller (`esphome/cnc-blast-gate.yaml`) pulls its packages from `cnc-bg-p1`, `p2a`, `p2b`, `p2c`, `p3a` and `p3b`. All keys, passwords and Wi-Fi values come from `!secret` entries in your own `secrets.yaml` (not in this repo), e.g. `smart_blast_gate_api_key`.
 
