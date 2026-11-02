@@ -40,7 +40,7 @@ esphome:
   min_version: "2026.9.0"
   project:
     name: "delrob.smart-blast-gate-display"
-    version: "2.0.3-tough"
+    version: "2.0.4-tough"
   platformio_options:
     board_build.f_cpu: 240000000L
 
@@ -135,6 +135,50 @@ sensor:
     id: vac_power
     entity_id: ${vac_power_entity}
     accuracy_decimals: 0
+
+
+# HA-controllable LCD backlight (AXP192 LDO3 enable + DCDC3 dim on Tough).
+# Name "Backlight" matches retired Shop CNC Display so it can join light.shop_control_displays.
+output:
+  - platform: template
+    id: backlight_pwm
+    type: float
+    write_action:
+      - lambda: |-
+          auto *axp = id(axp192_id);
+          if (state <= 0.001f) {
+            uint8_t buf = 0;
+            if (axp->read_byte(0x12, &buf)) {
+              buf = static_cast<uint8_t>(buf & ~(1 << 3));  // LDO3 off
+              axp->write_byte(0x12, buf);
+            }
+            axp->set_brightness(0.0f);
+          } else {
+            uint8_t buf = 0;
+            if (axp->read_byte(0x12, &buf)) {
+              buf = static_cast<uint8_t>(buf | (1 << 3));  // LDO3 on
+              axp->write_byte(0x12, buf);
+            }
+            axp->set_brightness(state);
+            // Apply DCDC3 dim immediately (UpdateBrightness is protected / polled)
+            const uint8_t c_min = 7;
+            const uint8_t c_max = 12;
+            uint8_t ubri = c_min + static_cast<uint8_t>(state * (c_max - c_min));
+            if (ubri > c_max) ubri = c_max;
+            uint8_t dcdc = 0;
+            if (axp->read_byte(0x27, &dcdc)) {
+              axp->write_byte(0x27, static_cast<uint8_t>((dcdc & 0x80) | (ubri << 3)));
+            }
+          }
+
+light:
+  - platform: monochromatic
+    name: "Backlight"
+    id: display_backlight
+    output: backlight_pwm
+    icon: mdi:monitor-dashboard
+    restore_mode: RESTORE_DEFAULT_ON
+    default_transition_length: 0s
 
 display:
   - platform: ili9xxx
