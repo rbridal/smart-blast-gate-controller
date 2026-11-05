@@ -10,6 +10,6 @@ Status of all: **Accepted**. Rationale marked _reconstructed_ where it wasn't ex
 - [0006 Alignment supervisor lives on the ESP; HA switches are desired-only](0006-supervisor-on-esp.md)
 - [0007 Dual 5 V supplies with common ground](0007-dual-5v-common-ground.md)
 - [0008 Last-gate close delay](0008-last-gate-close-delay.md)
-- [0009 Shelly EM + CT for spindle sense (not YoLink)](0009-shelly-em-spindle-sense.md)
+- [0009 Shelly EM + CT for spindle sense; VFD run relay as a future primary signal](0009-shelly-em-spindle-sense.md)
 - [0010 Woodcraft 2½″ hose + WoodRiver Y](0010-ducting.md)
 - [0011 open % / closed % mapping](0011-percent-mapping.md)
