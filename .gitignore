@@ -1,0 +1,17 @@
+# ESPHome / PlatformIO
+.esphome/
+.pio/
+.pioenvs/
+.piolibdeps/
+sdkconfig*
+dependencies.lock
+
+# Secrets / local
+secrets.yaml
+.env
+.env*
+*.bak
+*.bak-*
+.idea/
+.vscode/
+.DS_Store
